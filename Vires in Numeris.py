@@ -33,7 +33,7 @@ class ViN(IStrategy):
     write_to_csv = False
     df_csv = './user_data/df.csv'
 
-    stoploss = -0.50
+    stoploss = -0.10
 
     # Trailing stoploss (not used)
     trailing_stop = False
