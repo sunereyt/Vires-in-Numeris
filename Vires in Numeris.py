@@ -234,7 +234,7 @@ class ViN(IStrategy):
         buy = reduce(lambda x, y: x & y, logic)
         df.loc[buy, 'buy_tag'] +='cmf'
 
-        conditions.append(df.loc[:, 'buy_tag'].str.len() >= 6)
+        conditions.append(df.loc[:, 'buy_tag'].str.len() >= 9)
         if conditions:
             df.loc[:, 'buy'] = reduce(lambda x, y: x & y, conditions)
 
@@ -260,7 +260,6 @@ class ViN(IStrategy):
         return df
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
-        conditions = []
         df.loc[:, 'sell'] = False
         df.loc[:, 'sell_tag'] = ''
 
@@ -286,10 +285,6 @@ class ViN(IStrategy):
         logic.append(df['cmf_14'] <= df['cmf_14'].shift(1))
         sell = reduce(lambda x, y: x & y, logic)
         df.loc[sell, 'sell_tag'] +='cmf'
-
-        conditions.append(df['sell_tag'].str.len() >= 6)
-        if conditions:
-            df.loc[:, 'sell'] = reduce(lambda x, y: x & y, conditions)
 
         return df
 
@@ -321,7 +316,7 @@ class ViN(IStrategy):
 
         # do nothing with small profits
         if len(candle_1['sell_tag']) >= 6 and current_profit > 0.01:
-                return f"{candle_1['sell_tag']} ( {buy_tag})"
+                return f"{candle_1['sell_tag']} ({buy_tag})"
 
         return None
 
