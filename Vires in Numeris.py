@@ -24,7 +24,7 @@ class ViN(IStrategy):
     f_trades = './user_data/vintrades.txt'
     write_to_csv = False
     df_csv = './user_data/df.csv'
-    candle_periods = (3, 14)
+    candle_periods = (4, 14)
     has_bt_agefilter = True
     has_downtime_protection = False
     min_vol_candle: int = 1000
@@ -52,18 +52,11 @@ class ViN(IStrategy):
         # df['uppertail'] = (df['high'] / df['close']).where(positive, df['high'] / df['open'])
         # df['lowertail'] = (df['open'] / df['low']).where(positive, df['close'] / df['low'])
 
-        # streaks
-        df_closechange = df['close'] / df['close'].shift(1)
-        df['updown'] = np.where(df_closechange.gt(1), 1, np.where(df_closechange.lt(1), -1, 0))
-        df['streak'] = df['updown'].groupby((df['updown'].ne(df['updown'].shift(1))).cumsum()).cumsum()
-
-        df['updown_smoothed_2'] = np.where(df['close'].rolling(2).sum().gt(1), 1, np.where(df['close'].rolling(2).sum().lt(1), -1, 0))
-        df['streak_smoothed_2'] = df['updown_smoothed_2'].groupby((df['updown_smoothed_2'].ne(df['updown_smoothed_2'].shift(1))).cumsum()).cumsum()
-
-        # tops and bottoms (be careful with backtesting, this is a look ahead)
-        # df['topbottom'] = np.where(df_closechange.ge(1) & df_closechange.shift(-1).le(1), 'T', np.where(df_closechange.le(1) & df_closechange.shift(-1).ge(1), 'B', ''))
-        # change since last top or bottom
-        # df['topbottomchange'] = df['close'] / (df['open'] * df['topbottom'].replace({'':np.nan, 'T':1, 'B': 1})).fillna(method='ffill').shift(1)
+        df_closechange = df['close'] - df['close'].shift(1)
+        for i in (1, 2, 3):
+            df['updown'] = np.where(df_closechange.rolling(window=i, min_periods=1).sum().gt(0), 1, np.where(df_closechange.rolling(window=i, min_periods=1).sum().lt(0), -1, 0))
+            df[f"streak_{i}"] = df['updown'].groupby((df['updown'].ne(df['updown'].shift(1))).cumsum()).cumsum()
+        df.drop(columns=['updown'])
 
         for i in self.candle_periods:
             mom = ta.MOM(df, timeperiod=i)
@@ -74,15 +67,8 @@ class ViN(IStrategy):
             df[f"rsi_{i}"] = ta.RSI(df, timeperiod=i)
             df[f"mfi_{i}"] = ta.MFI(df, timeperiod=i)
             df[f"cti_{i}"] = pta.cti(df['close'], length=i)
-            df[f"cmf_{i}"] = chaikin_money_flow(df, i)
-
-        # crsi_closechange = df['close'] / df['close'].shift(1)
-        # crsi_updown = np.where(crsi_closechange.gt(1), 1.0, np.where(crsi_closechange.lt(1), -1.0, 0.0))
-        # df['crsi_100'] = (ta.RSI(df['close'], timeperiod=3) + ta.RSI(crsi_updown, timeperiod=2) + ta.ROC(df['close'], 100)) / 3
-        # df['crsi_480'] = (ta.RSI(df['close'], timeperiod=6) + ta.RSI(crsi_updown, timeperiod=3) + ta.ROC(df['close'], 480)) / 3
 
         df['volume_12'] = df['volume'].rolling(12).sum()
-
         if self.config['runmode'].value in ('live', 'dry_run'):
             if self.has_downtime_protection:
                 df['live_data_ok'] = (df['volume'].rolling(window=72, min_periods=72).min() > 0)
@@ -108,8 +94,9 @@ class ViN(IStrategy):
             if self.has_bt_agefilter:
                 conditions.append(df['bt_agefilter'].ge(self.startup_candle_count))
 
+        conditions.append((df[['streak_1', 'streak_2', 'streak_3']].min(axis=1)).between(-8, -2))
         i = 14
-        conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.3))
+        conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
         conditions.append(df[f"rsi_{i}"].between(10, 30))
         conditions.append(df[f"mfi_{i}"].between(0, 20))
         conditions.append(df[f"cti_{i}"].between(-0.95, -0.75))
@@ -147,11 +134,10 @@ class ViN(IStrategy):
         df.loc[:, 'sell'] = False
         df.loc[:, 'sell_tag'] = ''
 
-        df.loc[(df['mom_14'] / df['mom_14_upp']).between(1.0, 1.1), 'sell_tag'] +='mom'
+        df.loc[(df['mom_14'] / df['mom_14_upp']).between(1.05, 1.25), 'sell_tag'] +='mom'
         df.loc[df['rsi_14'].ge(65), 'sell_tag'] +='rsi'
         df.loc[df['mfi_14'].ge(75), 'sell_tag'] +='mfi'
         df.loc[df['cti_14'].ge(0.75) & df['cti_14'].le(df['cti_14'].shift(1)), 'sell_tag'] +='cti'
-        df.loc[df['cmf_14'].le(0.05) & df['cmf_14'].le(df['cmf_14'].shift(1)), 'sell_tag'] +='cmf'
 
         return df
 
@@ -177,7 +163,7 @@ class ViN(IStrategy):
         trade.max_rate = max_close_candle['close'].iloc[0]
         trade.min_rate = min_close_candle['close'].iloc[0]
 
-        if current_profit < -0.01:
+        if current_profit < -0.02:
             candle_1['buy'] = False
             return f"stoploss ({buy_tag})"
 
@@ -189,7 +175,7 @@ class ViN(IStrategy):
     def bot_loop_start(self, **kwargs) -> None:
         if self.config['runmode'].value not in ('live', 'dry_run'):
             with open(self.f_buys, 'w') as f:
-                print('pair;date open;trade open rate;buy tags;close_1;close_2;mom;mom_low;rsi;mfi;cti;cmf;mom;rsi;mfi;cti;cmf', file=f)
+                print('pair;date open;trade open rate;buy tags;close_1;close_2;mom;mom_low;rsi;mfi;cti;mom;rsi;mfi;cti', file=f)
             with open(self.f_trades, 'w') as f:
                 print('pair;date open;trade open rate;date close;trade rate;buy tags;sell reason;profit;max profit;max loss;max rate;min rate;max close date;min close date', file=f)
             if self.write_to_csv:
@@ -224,12 +210,10 @@ class ViN(IStrategy):
                 indicator.append(candle_1[f"rsi_{period}"])
                 indicator.append(candle_1[f"mfi_{period}"])
                 indicator.append(candle_1[f"cti_{period}"])
-                indicator.append(candle_1[f"cmf_{period}"])
                 indicator.append(candle_2[f"mom_{period}"])
                 indicator.append(candle_2[f"rsi_{period}"])
                 indicator.append(candle_2[f"mfi_{period}"])
                 indicator.append(candle_2[f"cti_{period}"])
-                indicator.append(candle_2[f"cmf_{period}"])
                 with open(self.f_buys, 'a') as f:
                     print(f"{pair};{buy_candle_date};{rate:.10n};{buy_tags};{close_1_price:.10n};{close_2_price:.10n}", *indicator, sep=';', file=f)
         else:
@@ -240,15 +224,16 @@ class ViN(IStrategy):
     def confirm_trade_exit(self, pair: str, trade: "Trade", order_type: str, amount: float,
                            rate: float, time_in_force: str, sell_reason: str, **kwargs) -> bool:
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        df: DataFrame = df
 
         if self.config['runmode'].value not in ('live', 'dry_run'):
             trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
             trade_close_date = timeframe_to_prev_date(self.timeframe, trade.close_date_utc)
             buy_tag = trade.buy_tag if trade is not None else 'empty'
 
-            df_trade: DataFrame = df[(df['date'].ge(trade_open_date)) & (df['date'].le(trade_close_date))]
+            df_trade = df[(df['date'].ge(trade_open_date)) & (df['date'].le(trade_close_date))]
             if df_trade.empty:
-                log.warning(f"confirm_trade_exit: Empty trade df for pair {pair} on trade open date {trade_open_date}.")
+                log.warning(f"confirm_trade_exit: Empty trade dataframe for pair {pair} on trade with open date {trade_open_date} and close date {trade_close_date}.")
                 return False
 
             max_close_candle = df_trade.nlargest(1, columns=['close'])
