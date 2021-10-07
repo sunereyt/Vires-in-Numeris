@@ -4,10 +4,8 @@ import talib.abstract as ta
 from pandas import DataFrame, Series
 from functools import reduce
 from datetime import datetime
-import time
 import pandas_ta as pta
 
-import freqtrade.vendor.qtpylib.indicators as qtpylib
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
@@ -24,7 +22,9 @@ class ViN(IStrategy):
     f_trades = './user_data/vintrades.txt'
     write_to_csv = False
     df_csv = './user_data/df.csv'
-    time_periods = (7, 8, 9, 10, 11, 12, 13, 14)
+    time_periods = (14,)
+    indicator_range = range(6, 15)
+    # indicator_range = range(min(time_periods, max(time_periods)+1))
     has_bt_agefilter = True
     has_downtime_protection = False
     min_vol_candle: int = 1000
@@ -62,7 +62,7 @@ class ViN(IStrategy):
         df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
         df.drop(columns=['updown'])
 
-        for i in range(6, 25):
+        for i in self.indicator_range:
             mom = ta.MOM(df, timeperiod=i)
             upperband, middleband, lowerband = ta.BBANDS(mom, timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
             df[f"mom_{i}"] = mom
@@ -71,7 +71,6 @@ class ViN(IStrategy):
             df[f"rsi_{i}"] = ta.RSI(df, timeperiod=i)
             df[f"mfi_{i}"] = ta.MFI(df, timeperiod=i)
             df[f"cti_{i}"] = pta.cti(df['close'], length=i)
-            df = df.copy()
 
         df['volume_12'] = df['volume'].rolling(12).sum()
         if self.config['runmode'].value in ('live', 'dry_run'):
@@ -81,6 +80,7 @@ class ViN(IStrategy):
             if self.has_bt_agefilter:
                 df['bt_agefilter'] = df['volume'].rolling(window=self.startup_candle_count, min_periods=self.startup_candle_count).count()
 
+        df = df.copy()
         return df
 
     def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -101,7 +101,7 @@ class ViN(IStrategy):
 
         for i in self.time_periods:
             buy_condition = []
-            buy_condition.append(df['streak_min'].eq(-i))
+            buy_condition.append(df['streak_min'].between(-14, -3)) #eq(-i))
             buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
             buy_condition.append(df[f"rsi_{i}"].between(10, 30))
             buy_condition.append(df[f"mfi_{i}"].between(0, 20))
@@ -143,17 +143,17 @@ class ViN(IStrategy):
         df.loc[:, 'sell_tag'] = ''
         df.loc[:, 'stoploss_tag'] = ''
 
-        for i in range(6, 25):
+        for i in self.indicator_range:
             sell_condition = []
-            if i == 6:
+            if i == min(self.indicator_range):
                 sell_condition.append(df['streak_max'].le(i))
-            elif i == 24:
+            elif i == max(self.indicator_range):
                 sell_condition.append(df['streak_max'].ge(i))
             else:
                 sell_condition.append(df['streak_max'].eq(i))
-            sell_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_upp"]).between(1.05, 1.25))
-            sell_condition.append(df[f"rsi_{i}"].between(65, 100))
-            sell_condition.append(df[f"mfi_{i}"].between(75, 100))
+            # sell_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_upp"]).between(1.05, 1.25))
+            sell_condition.append(df[f"rsi_{i}"].between(80 - i, 100))
+            sell_condition.append(df[f"mfi_{i}"].between(90 - i, 100))
             sell_condition.append(df[f"cti_{i}"].between(0.75, 1.0))
             sell_condition.append(df[f"cti_{i}"].le(df[f"cti_{i}"].shift(1)))
 
@@ -161,17 +161,17 @@ class ViN(IStrategy):
             df.loc[sell, 'sell_tag'] = f"sell_{i}"
 
             stoploss_condition = []
-            if i == 6:
+            if i == min(self.indicator_range):
                 sell_condition.append(df['streak_min'].ge(-i))
-            elif i == 24:
+            elif i == max(self.indicator_range):
                 sell_condition.append(df['streak_min'].le(-i))
             else:
                 sell_condition.append(df['streak_max'].eq(-i))
-            stoploss_condition.append(df[f"rsi_{i}"].between(30, 100))
-            stoploss_condition.append(df[f"mfi_{i}"].between(20, 100))
+            stoploss_condition.append(df[f"rsi_{i}"].between(45 - i, 100))
+            stoploss_condition.append(df[f"mfi_{i}"].between(35 - i, 100))
 
             stoploss = reduce(lambda x, y: x & y, stoploss_condition)
-            df.loc[stoploss, 'stoploss_tag'] = f"stoploss_{i}"
+            df.loc[stoploss, 'stoploss_tag'] = f"stop_{i}"
 
         return df
 
@@ -198,7 +198,7 @@ class ViN(IStrategy):
         trade.min_rate = min_close_candle['close'].iloc[0]
 
         if (
-            current_profit < -0.03
+            current_profit < -0.01
             and candle_1['streak_max'] <= -1
             and candle_1['stoploss_tag'] != ''
             # and candle_1['rsi_14'] >= 30
