@@ -21,7 +21,7 @@ class ViN(IStrategy):
     f_trades = './user_data/vintrades.txt'
     write_to_csv = False
     df_csv = './user_data/df.csv'
-    buy_time_periods = (13, 14, 15)
+    buy_time_periods = (13, 14, 15, 16, 17)
     indicator_range = range(3, max(buy_time_periods)+1)
     has_bt_agefilter = True
     has_downtime_protection = False
@@ -100,8 +100,8 @@ class ViN(IStrategy):
             elif i == max(self.buy_time_periods):
                 buy_condition.append(df['streak_min'].le(-i))
             else:
-                buy_condition.append(df['streak_min'].eq(-i)) #between(-self.buy_time_periods[j+1] + 1, -i))
-            buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
+                buy_condition.append(df['streak_min'].eq(-i))
+            buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.05, 1.25))
             buy_condition.append(df[f"rsi_{i}"].between(10, 10 + i))
             buy_condition.append(df[f"mfi_{i}"].between(0, 7 + i))
             buy_condition.append(df[f"cti_{i}"].between(-0.95, (-0.90 + i / 100)))
@@ -206,6 +206,7 @@ class ViN(IStrategy):
             if sell_tag != '':
                 if candle_1['buy']:
                     log.info(f"custom sell: sell cancelled with sell_tag {candle_1['sell_tag']} and buy_tag {candle_1['buy_tag']}")
+                    return None
                 else:
                     candle_1['sell'] = True
                     return f"{sell_tag} ({buy_tag})"
