@@ -31,7 +31,7 @@ class ViN(IStrategy):
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -1 #-0.08
+    stoploss = -0.99 #-0.08
     stoploss_on_exchange = False # True
     trailing_stop = False
     use_custom_stoploss = False
@@ -58,7 +58,7 @@ class ViN(IStrategy):
 
         df['streak_min'] = df[['streak_1', 'streak_2', 'streak_3']].min(axis=1)
         df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
-        df.drop(columns=['updown'])
+        df.drop(columns=['updown', 'streak_1', 'streak_2', 'streak_3'])
 
         cf = df['close'].reset_index()
         for i in self.indicator_range:
@@ -82,9 +82,8 @@ class ViN(IStrategy):
         if len(df) < self.startup_candle_count:
             return df
 
-        conditions = []
         df.loc[:, 'buy_tag'] = ''
-
+        conditions = []
         conditions.append(df['volume'].ge(self.min_vol_candle))
         conditions.append(df['volume_12'].ge(self.min_vol_1h))
         if self.config['runmode'].value in ('live', 'dry_run'):
@@ -104,7 +103,7 @@ class ViN(IStrategy):
                 buy_condition.append(df['streak_min'].eq(-i)) #between(-self.buy_time_periods[j+1] + 1, -i))
             buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
             buy_condition.append(df[f"rsi_{i}"].between(10, 10 + i))
-            buy_condition.append(df[f"mfi_{i}"].between(0, 5 + i))
+            buy_condition.append(df[f"mfi_{i}"].between(0, 7 + i))
             buy_condition.append(df[f"cti_{i}"].between(-0.95, (-0.90 + i / 100)))
             buy_condition.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
 
@@ -149,8 +148,8 @@ class ViN(IStrategy):
                 sell_condition.append(df['streak_max'].ge(i))
             else:
                 sell_condition.append(df['streak_max'].eq(i))
-            sell_condition.append(df[f"rsi_{i}"].between(90 - i, 100))
-            sell_condition.append(df[f"mfi_{i}"].between(95 - i, 100))
+            sell_condition.append(df[f"rsi_{i}"].between(92 - i, 100))
+            sell_condition.append(df[f"mfi_{i}"].between(97 - i, 100))
             sell_condition.append(df[f"cti_{i}"].ge((i - 6) / 10))
             sell_condition.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
 
@@ -170,13 +169,13 @@ class ViN(IStrategy):
                 sell_condition.append(df['streak_min'].le(-i))
             else:
                 sell_condition.append(df['streak_min'].eq(-i))
-            sell_condition.append(df[f"rsi_{i}"].between(40 - i, 100))
+            sell_condition.append(df[f"rsi_{i}"].between(43 - i, 100))
             sell_condition.append(df[f"mfi_{i}"].between(35 - i, 100))
             sell_condition.append(df[f"cti_{i}"].le((-i + 6) / 10))
             sell_condition.append(df[f"cti_{i-1}"].gt(df[f"cti_{i}"]))
 
-            stop = reduce(lambda x, y: x & y, sell_condition)
-            df.loc[stop, 'sell_tag'] = f"sell_down_{i}"
+            sell = reduce(lambda x, y: x & y, sell_condition)
+            df.loc[sell, 'sell_tag'] = f"sell_down_{i}"
 
         df.loc[:, 'sell'] = False
         return df
@@ -184,8 +183,6 @@ class ViN(IStrategy):
     def custom_sell(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        df: DataFrame = df
-
         trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
         df_trade: DataFrame = df[df['date'] >= trade_open_date]
         if df_trade.empty:
@@ -195,20 +192,20 @@ class ViN(IStrategy):
         if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
             buy_tag = trade.buy_tag
 
-        candle_1 = df.iloc[-1].copy(deep=False)
-        max_close_candle = df_trade.nlargest(1, columns=['close'])
+        candle_1 = df_trade.iloc[-1].copy(deep=False)
+        # max_close_candle = df_trade.nlargest(1, columns=['close'])
         # min_close_candle = df_trade.nsmallest(1, columns=['close'])
         # trade.min_rate = min_close_candle['close'].iloc[0]
-        max_rate = max_close_candle['close'].iloc[0]
+        # max_rate = max_close_candle['close'].iloc[0]
         current_rate = candle_1['close']
         current_profit = (current_rate - trade.open_rate) / trade.open_rate
-        max_profit = (max_rate - trade.open_rate) / trade.open_rate
+        # max_profit = (max_rate - trade.open_rate) / trade.open_rate
 
         if current_profit > 0.015 or current_profit < -0.015:
             sell_tag = candle_1['sell_tag']
             if sell_tag != '':
                 if candle_1['buy']:
-                    log.info(f"custom sell: sell with sell_tag {candle_1['sell_tag']} and buy_tag {candle_1['buy_tag']}")
+                    log.info(f"custom sell: sell cancelled with sell_tag {candle_1['sell_tag']} and buy_tag {candle_1['buy_tag']}")
                 else:
                     candle_1['sell'] = True
                     return f"{sell_tag} ({buy_tag})"
@@ -240,7 +237,7 @@ class ViN(IStrategy):
                 buy_info = self.custom_buy_info[buy_candle_date]
                 buy_signal_count = buy_info['buy_signals']
                 if buy_signal_count > self.max_concurrent_buy_signals:
-                    log.info(f"Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {self.max_concurrent_buy_signals}).")
+                    log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {self.max_concurrent_buy_signals}).")
                     return False
 
             if self.config['runmode'].value not in ('live', 'dry_run'):
