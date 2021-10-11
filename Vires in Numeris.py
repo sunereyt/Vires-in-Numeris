@@ -246,7 +246,7 @@ class ViN(IStrategy):
 
         if buy_candle_date in self.custom_buy_info.keys():
             pairs = len(self.dp.current_whitelist())
-            max_concurrent_buy_signals = np.floor(pairs * 0.08)
+            max_concurrent_buy_signals = int(pairs * 0.08)
             buy_tags = self.custom_buy_info[buy_candle_date][pair]
             if  max_concurrent_buy_signals > 0:
                 buy_info = self.custom_buy_info[buy_candle_date]
