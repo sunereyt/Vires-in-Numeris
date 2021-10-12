@@ -203,13 +203,8 @@ class ViN(IStrategy):
             buy_tag = trade.buy_tag
 
         candle_1 = df_trade.iloc[-1].copy(deep=False)
-        # max_close_candle = df_trade.nlargest(1, columns=['close'])
-        # min_close_candle = df_trade.nsmallest(1, columns=['close'])
-        # trade.min_rate = min_close_candle['close'].iloc[0]
-        # max_rate = max_close_candle['close'].iloc[0]
         current_rate = candle_1['close']
         current_profit = (current_rate - trade.open_rate) / trade.open_rate
-        # max_profit = (max_rate - trade.open_rate) / trade.open_rate
 
         sell_tag = candle_1['sell_tag']
         if sell_tag != '':
@@ -262,11 +257,9 @@ class ViN(IStrategy):
                 period = 14
                 indicator.append(candle_1[f"mom_{period}"])
                 indicator.append(candle_1[f"mom_{period}_low"])
-                indicator.append(candle_1[f"rsi_{period}"])
                 indicator.append(candle_1[f"mfi_{period}"])
                 indicator.append(candle_1[f"cti_{period}"])
                 indicator.append(candle_2[f"mom_{period}"])
-                indicator.append(candle_2[f"rsi_{period}"])
                 indicator.append(candle_2[f"mfi_{period}"])
                 indicator.append(candle_2[f"cti_{period}"])
                 with open(self.f_buys, 'a') as f:
