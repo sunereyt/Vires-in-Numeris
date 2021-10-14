@@ -27,7 +27,7 @@ class ViN(IStrategy):
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -10.08
+    stoploss = -0.08
     stoploss_on_exchange = True
     trailing_stop = False
     use_custom_stoploss = False
@@ -66,6 +66,7 @@ class ViN(IStrategy):
         df['lowertail'] = (df['open'] / df['low']).where(positive, df['close'] / df['low'])
         df['volume_6'] = df['volume'].rolling(6).sum()
         df['candle_count'] = df['volume'].rolling(window=self.startup_candle_count, min_periods=self.startup_candle_count).count()
+
         df_closechange = df['close'] - df['close'].shift(1)
         for i in (1, 2, 3):
             df['updown'] = np.where(df_closechange.rolling(window=i, min_periods=1).sum().gt(0), 1, np.where(df_closechange.rolling(window=i, min_periods=1).sum().lt(0), -1, 0))
@@ -73,11 +74,12 @@ class ViN(IStrategy):
         df['streak_min'] = df[['streak_1', 'streak_2', 'streak_3']].min(axis=1)
         df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
         df.drop(columns=['updown', 'streak_1', 'streak_2', 'streak_3'])
+
         ef = df['close'].reset_index()
         for i in self.indicator_range:
 
-            df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
-            upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
+            # df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
+            # upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
 
             mfi = MFI(df, length=i)
             df[f"mfi_{i}"] = mfi
@@ -102,26 +104,26 @@ class ViN(IStrategy):
         for i in self.buy_time_periods:
             buy_condition = []
 
-            if i == min(self.buy_time_periods):
-                buy_condition.append(df['streak_min'].between(-i, -3))
-            elif i == max(self.buy_time_periods):
-                buy_condition.append(df['streak_min'].le(-i))
-            else:
-                buy_condition.append(df['streak_min'].eq(-i))
-            buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
+            # if i == min(self.buy_time_periods):
+            #     buy_condition.append(df['streak_min'].between(-i, -3))
+            # elif i == max(self.buy_time_periods):
+            #     buy_condition.append(df['streak_min'].le(-i))
+            # else:
+            #     buy_condition.append(df['streak_min'].eq(-i))
+            # buy_condition.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
             buy_condition.append(df[f"mfi_{i}"].between(0, 7 + i))
             buy_condition.append(df[f"cti_{i}"].between(-0.95, (-0.90 + i / 100)))
-            buy_condition.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
+            # buy_condition.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
             buy_condition.append(df['lowertail'].ge(1.002))
             
             # buy_par = self.d_buy[i]
-            # buy_condition.append(df['streak_min'].eq(-i))
+            buy_condition.append(df['streak_min'].eq(-i))
             # buy_condition.append(df[f"mfi_{i}"].between(buy_par[0], buy_par[1]))
             # buy_condition.append(df[f"cmf_{i}"].between(buy_par[2], buy_par[3]))
             # buy_condition.append(df[f"cti_{i}"].between(buy_par[4], buy_par[5]))
             # buy_condition.append(df['lowertail'].ge(buy_par[6]))
-            # buy_condition.append(df[f"mfi_corr_{i}"].gt(0))
-            # buy_condition.append(df[f"cmf_corr_{i}"].gt(0))
+            buy_condition.append(df[f"mfi_corr_{i}"].gt(0))
+            buy_condition.append(df[f"cmf_corr_{i}"].gt(0))
             # buy_condition.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
 
             buy = reduce(lambda x, y: x & y, buy_condition)
@@ -249,7 +251,7 @@ class ViN(IStrategy):
     def bot_loop_start(self, **kwargs) -> None:
         if self.config['runmode'].value not in ('live', 'dry_run'):
             with open(self.f_buys, 'w') as f:
-                print('pair;date open;trade open rate;buy tags;close_1;close_2;mom;mom_low;rsi;mfi;cti;mom;rsi;mfi;cti', file=f)
+                print('pair;date open;trade open rate;buy tags;close;mfi;cmf;cti', file=f)
             with open(self.f_trades, 'w') as f:
                 print('pair;date open;trade open rate;date close;trade rate;buy tags;sell reason;profit;max profit;max loss;max rate;min rate;max close date;min close date', file=f)
             if self.write_to_csv:
