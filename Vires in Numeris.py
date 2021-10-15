@@ -27,8 +27,8 @@ class ViN(IStrategy):
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -0.99 # 0.08
-    stoploss_on_exchange = False # True
+    stoploss = -0.16
+    stoploss_on_exchange = True
     trailing_stop = False
     use_custom_stoploss = False
     timeframe = '5m'
