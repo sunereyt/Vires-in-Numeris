@@ -27,8 +27,8 @@ class ViN(IStrategy):
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -0.08
-    stoploss_on_exchange = True
+    stoploss = -0.99 # 0.08
+    stoploss_on_exchange = False # True
     trailing_stop = False
     use_custom_stoploss = False
     timeframe = '5m'
@@ -67,6 +67,7 @@ class ViN(IStrategy):
         df['lowertail'] = (df['open'] / df['low']).where(positive, df['close'] / df['low'])
         df['volume_6'] = df['volume'].rolling(6).sum()
         df['candle_count'] = df['volume'].rolling(window=self.startup_candle_count, min_periods=self.startup_candle_count).count()
+        df['close_change'] = df['close'].pct_change()
 
         df_closechange = df['close'] - df['close'].shift(1)
         for i in (1, 2, 3):
@@ -83,9 +84,6 @@ class ViN(IStrategy):
             mfi = MFI(df, length=i)
             df[f"mfi_{i}"] = mfi
             # df[f"mfi_corr_{i}"] = ef['index'].rolling(i).corr(mfi, method='spearman')
-            # cmf = CMF(df, length=i)
-            # df[f"cmf_{i}"] = cmf
-            # df[f"cmf_corr_{i}"] = ef['index'].rolling(i).corr(cmf, method='spearman')
             df[f"cti_{i}"] = ef['index'].rolling(i).corr(ef['close'], method='spearman')
 
         return df.copy()
@@ -102,7 +100,6 @@ class ViN(IStrategy):
 
         for i in self.buy_time_periods:
             buy_conditions = []
-
             if i == min(self.buy_time_periods):
                 buy_conditions.append(df['streak_min'].between(-i, -3))
             elif i == max(self.buy_time_periods):
@@ -111,7 +108,7 @@ class ViN(IStrategy):
                 buy_conditions.append(df['streak_min'].eq(-i))
             buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
             buy_conditions.append(df[f"mfi_{i}"].between(0, 7 + i))
-            buy_conditions.append(df[f"cti_{i}"].between(-0.95, -0.75)) #(-0.90 + i / 100)))
+            buy_conditions.append(df[f"cti_{i}"].between(-0.95, -0.75))
             buy_conditions.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
             buy_conditions.append(df['lowertail'].ge(1.002))
             
@@ -129,7 +126,7 @@ class ViN(IStrategy):
             # buy_conditions.append(sum(corr_conditions) >= 2)
 
             buy = reduce(lambda x, y: x & y, buy_conditions)
-            df.loc[buy, 'buy_tag'] = f"buy_{i}"
+            df.loc[buy, 'buy_tag'] = 'buy' + df['streak_min'].astype(str)
 
         conditions.append(df.loc[:, 'buy_tag'] != '')
         df.loc[:, 'buy'] = reduce(lambda x, y: x & y, conditions)
@@ -177,12 +174,11 @@ class ViN(IStrategy):
                 sell_conditions.append(df['streak_max'].eq(i))
             sell_conditions.append(df[f"mfi_{i}"].between(96 - i, 100))
             sell_conditions.append(df[f"cti_{i}"].between(0.70, 0.90))
-            # sell_conditions.append(df[f"cti_{i}"].ge((i - 6) / 10))
             sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
             # sell_conditions.append(df['uppertail'].ge(1.002))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = f"sell_up_{i}"
+            df.loc[sell, 'sell_tag'] = 'sell+' + df['streak_max'].astype(str)
 
         time_periods = range(4, min(candles_between, 16))
         for i in time_periods:
@@ -197,31 +193,11 @@ class ViN(IStrategy):
                 sell_conditions.append(df['streak_min'].eq(-i))
             sell_conditions.append(df[f"mfi_{i}"].between(35 - i, 100))
             sell_conditions.append(df[f"cti_{i}"].le(-0.50))
-            # sell_conditions.append(df[f"cti_{i}"].le((-i + 6) / 10))
             sell_conditions.append(df[f"cti_{i-1}"].gt(df[f"cti_{i}"]))
-            sell_conditions.append(df[f"cti_2"].lt(0.01))
+            sell_conditions.append(df['close_change'].le(0))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = f"sell_down_{i}"
-
-        # time_periods = range(5, min(candles_between, 16))
-        # for i in time_periods:
-        #     sell_conditions = []
-        #     sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
-        #     sell_conditions.append(df['volume'].ge(self.min_candle_vol))
-        #     if i == min(time_periods):
-        #         sell_conditions.append(df['streak_min'].between(-i, -3))
-        #     elif i == max(time_periods):
-        #         sell_conditions.append(df['streak_min'].le(-i))
-        #     else:
-        #         sell_conditions.append(df['streak_min'].eq(-i))
-        #     sell_conditions.append(df[f"mfi_{i}"].between(35 - i, 100))
-        #     sell_conditions.append(df[f"cti_{i}"].le((-i + 6) / 10))
-        #     sell_conditions.append(df[f"cti_{i-1}"].gt(df[f"cti_{i}"]))
-        #     sell_conditions.append(df[f"cti_2"].lt(0.01))
-
-        #     sell = reduce(lambda x, y: x & y, sell_conditions)
-        #     df.loc[sell, 'sell_tag'] += f"stop_{i}"
+            df.loc[sell, 'sell_tag'] = 'sell' + df['streak_min'].astype(str)
 
         df.loc[:, 'sell'] = False
         return df
@@ -242,7 +218,7 @@ class ViN(IStrategy):
         current_rate = candle_1['close']
         current_profit = (current_rate - trade.open_rate) / trade.open_rate
         sell_tag = candle_1['sell_tag']
-        if current_profit < -0.015 and 'sell_down' in sell_tag:
+        if current_profit < -0.015 and 'sell-' in sell_tag:
             return f"{sell_tag} ({buy_tag})"
         if current_profit > 0.015 and 'sell' in sell_tag:
             if candle_1['buy']:
