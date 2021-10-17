@@ -78,7 +78,7 @@ class MF(IStrategy):
             else:
                 buy_conditions.append(df['streak_min'].eq(-i))
             buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
-            buy_conditions.append(df[f"mfi_{i}"].le(20)) #between(0, 7 + i))
+            buy_conditions.append(df[f"mfi_{i}"].le(20))
             buy_conditions.append(df[f"cti_{i}"].le(-0.80))
             buy_conditions.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
             buy_conditions.append(df['lowertail'].ge(1.002))
