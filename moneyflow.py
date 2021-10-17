@@ -16,19 +16,14 @@ class MF(IStrategy):
     INTERFACE_VERSION = 2
 
     stoploss_count: int = 0
-    write_to_txt = False
-    f_buys = './user_data/vinbuys.txt'
-    f_trades = './user_data/vintrades.txt'
-    write_to_csv = False
-    df_csv = './user_data/df.csv'
     buy_time_periods = (13, 14, 15)
     indicator_range = range(2, 16)
     min_candle_vol: int = 0
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -0.12
-    stoploss_on_exchange = True
+    stoploss = -0.99
+    stoploss_on_exchange = False
     trailing_stop = False
     use_custom_stoploss = False
     timeframe = '5m'
@@ -62,7 +57,6 @@ class MF(IStrategy):
             upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
             mfi = mfi_enh(df, length=i)
             df[f"mfi_{i}"] = mfi
-            # df[f"mfi_corr_{i}"] = ef['index'].rolling(i).corr(mfi, method='spearman')
             df[f"cti_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
 
         return df.copy()
@@ -84,7 +78,6 @@ class MF(IStrategy):
             else:
                 buy_conditions.append(df['streak_min'].eq(-i))
             buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
-            # use fixed mom value if using streak_min value?
             buy_conditions.append(df[f"mfi_{i}"].le(20)) #between(0, 7 + i))
             buy_conditions.append(df[f"cti_{i}"].le(-0.80))
             buy_conditions.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
@@ -108,11 +101,6 @@ class MF(IStrategy):
                 self.custom_buy_info[buy_date]['buy_tags'] += row['buy_tag']
                 self.custom_buy_info[buy_date]['buy_signals'] += 1
 
-        if self.config['runmode'].value not in ('live', 'dry_run') and self.write_to_csv:
-            df['pair'] = metadata['pair']
-            with open(self.df_csv, 'a') as f:
-                df.to_csv(f, sep='\t', header=f.tell()==0, index=False)
-
         return df
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -132,8 +120,8 @@ class MF(IStrategy):
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
             sell_conditions.append(df[f"mfi_{i}"].ge(96))
-            sell_conditions.append(df[f"cti_{i}"].between(0.76, 0.96))
-            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
+            sell_conditions.append(df[f"cti_{i}"].between(0.50, 0.90))
+            sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
             df.loc[sell, 'sell_tag'] = 'sell+' + df['streak_max'].astype(str)
@@ -148,8 +136,8 @@ class MF(IStrategy):
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
             sell_conditions.append(df[f"mfi_{i}"].ge(96))
-            sell_conditions.append(df[f"cti_{i}"].gt(0.96))
-            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
+            sell_conditions.append(df[f"cti_{i}"].gt(0.90))
+            sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
             sell_conditions.append(df['uppertail'].ge(1.01))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
@@ -164,8 +152,8 @@ class MF(IStrategy):
                 sell_conditions.append(df['streak_min'].le(-i))
             else:
                 sell_conditions.append(df['streak_min'].eq(-i))
-            sell_conditions.append(df[f"mfi_{i}"].ge(40))
-            sell_conditions.append(df[f"cti_{i}"].le(-0.75))
+            sell_conditions.append(df[f"mfi_{i}"].ge(20))
+            sell_conditions.append(df[f"cti_{i}"].le(-0.50))
             sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
             sell_conditions.append(df['close_change'].le(-0.01))
 
@@ -208,7 +196,7 @@ class MF(IStrategy):
         candles_between = df_trade.index[-1] - df_trade.index[0]
         if current_profit < -0.04 and 'stop' in stop_tag:
             if candle_1['buy']:
-                log.info(f"custom_sell: stop for pair {pair} with stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy with buy_tag {candle_1['buy_tag']}.")
+                log.info(f"custom_sell: stop for pair {pair} with profit {current_profit}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
                 return None
             else:
                 n = int("".join(filter(str.isdigit, stop_tag)))
@@ -219,7 +207,7 @@ class MF(IStrategy):
 
         if current_profit > 0.015 and 'sell' in sell_tag:
             if candle_1['buy']:
-                log.info(f"custom_sell: sell for pair {pair} with profit {current_profit}, sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled.")
+                log.info(f"custom_sell: sell for pair {pair} with profit {current_profit}, sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
                 return None
             else:
                 n = int("".join(filter(str.isdigit, sell_tag)))
@@ -231,22 +219,12 @@ class MF(IStrategy):
     def bot_loop_start(self, **kwargs) -> None:
         self.min_candle_vol = self.config['stake_amount']
     
-        if self.config['runmode'].value not in ('live', 'dry_run'):
-            with open(self.f_buys, 'w') as f:
-                print('pair;date open;trade open rate;buy tags;close;mfi;cmf;cti', file=f)
-            with open(self.f_trades, 'w') as f:
-                print('pair;date open;trade open rate;date close;trade rate;buy tags;sell reason;profit;max profit;max loss;max rate;min rate;max close date;min close date', file=f)
-            if self.write_to_csv:
-                with open(self.df_csv, 'w') as f:
-                    pass
-
         return None
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, **kwargs) -> bool:
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         candle_1: Series = df.iloc[-1]
-        candle_2: Series = df.iloc[-2]
         buy_candle_date = candle_1['date']
 
         if buy_candle_date in self.custom_buy_info.keys():
@@ -259,46 +237,11 @@ class MF(IStrategy):
                 if buy_signal_count > max_concurrent_buy_signals:
                     log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
                     return False
-
-            if self.config['runmode'].value not in ('live', 'dry_run') and self.write_to_txt:
-                close_1_price = candle_1['close']
-                close_2_price = candle_2['close']
-                indicator = []
-                period = 14
-                indicator.append(candle_1[f"mfi_{period}"])
-                indicator.append(candle_1[f"cti_{period}"])
-                indicator.append(candle_2[f"cti_{period}"])
-                with open(self.f_buys, 'a') as f:
-                    print(f"{pair};{buy_candle_date};{rate:.10n};{buy_tags};{close_1_price:.10n};{close_2_price:.10n}", *indicator, sep=';', file=f)
         else:
             log.warning(f"confirm_trade_entry: No buy info for pair {pair} on candle {buy_candle_date}.")
 
         return True
 
-    def confirm_trade_exit(self, pair: str, trade: "Trade", order_type: str, amount: float,
-                           rate: float, time_in_force: str, sell_reason: str, **kwargs) -> bool:
-        if self.config['runmode'].value not in ('live', 'dry_run') and self.write_to_txt:
-            df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-            df: DataFrame = df
-            trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-            trade_close_date = timeframe_to_prev_date(self.timeframe, trade.close_date_utc)
-            df_trade = df.loc[(df['date'].ge(trade_open_date)) & (df['date'].le(trade_close_date))]
-            if df_trade.empty:
-                log.warning(f"confirm_trade_exit: Empty trade dataframe for pair {pair} on trade with open date {trade_open_date} and close date {trade_close_date}.")
-                return False
-
-            buy_tag = trade.buy_tag if trade is not None else 'empty'
-            max_close_candle = df_trade.nlargest(1, columns=['close'])
-            min_close_candle = df_trade.nsmallest(1, columns=['close'])
-            min_close_date = min_close_candle['date'].to_numpy()[0]
-            max_close_date = max_close_candle['date'].to_numpy()[0]
-            profit = (rate - trade.open_rate) / trade.open_rate
-            max_profit = (trade.max_rate - trade.open_rate) / trade.open_rate
-            max_loss = (trade.min_rate - trade.open_rate) / trade.open_rate
-            with open(self.f_trades, 'a') as f:
-                print(f'{pair};{trade_open_date};{trade.open_rate:.10n};{trade_close_date};{rate:.10n};{buy_tag};{sell_reason.partition(" (")[0]};{profit:.10n};{max_profit:.10n};{max_loss:.10n};{trade.max_rate:.10n};{trade.min_rate:.10n};{max_close_date};{min_close_date};', file=f)
-
-        return True
 
 def cmf_enh(df: DataFrame, length: int) -> Series:
     max_tail = 1.05
@@ -318,65 +261,3 @@ def mfi_enh(df: DataFrame, length: int) -> Series:
     mfn = mf.where(hlc3.lt(hlc3.shift(1)), 0).rolling(window=length, min_periods=length).sum()
 
     return 100 * (mfp / (mfp + mfn))
-
-
-class ViN1(ViN):
-    b = __name__.lower()
-    if b not in ('vin'):
-    # to check each time_period use confirm_trade_entry
-        buy_period = int("".join(filter(str.isdigit, b)))
-
-class ViN3(ViN1):
-    pass
-
-class ViN4(ViN1):
-    pass
-
-class ViN5(ViN1):
-    pass
-
-class ViN6(ViN1):
-    pass
-
-class ViN7(ViN1):
-    pass
-
-class ViN8(ViN1):
-    pass
-
-class ViN9(ViN1):
-    pass
-
-class ViN10(ViN1):
-    pass
-
-class ViN11(ViN1):
-    pass
-
-class ViN12(ViN1):
-    pass
-
-class ViN13(ViN1):
-    pass
-
-class ViN14(ViN1):
-    pass
-
-class ViN15(ViN1):
-    pass
-
-class ViN16(ViN1):
-    pass
-
-class ViN17(ViN1):
-    pass
-
-class ViN18(ViN1):
-    pass
-
-class ViN19(ViN1):
-    pass
-
-class ViN20(ViN1):
-    pass
-
