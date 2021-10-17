@@ -119,8 +119,9 @@ class MF(IStrategy):
                 sell_conditions.append(df['streak_max'].ge(i))
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
+            sell_conditions.append(df['streak_max'].ne(df['streak_min']))
             sell_conditions.append(df[f"mfi_{i}"].ge(96))
-            sell_conditions.append(df[f"cti_{i}"].between(0.50, 0.90))
+            sell_conditions.append(df[f"cti_{i}"].between(0.70, 0.90))
             sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
@@ -138,7 +139,7 @@ class MF(IStrategy):
             sell_conditions.append(df[f"mfi_{i}"].ge(96))
             sell_conditions.append(df[f"cti_{i}"].gt(0.90))
             sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
-            sell_conditions.append(df['uppertail'].ge(1.01))
+            sell_conditions.append(df['uppertail'].ge(1.02))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
             df.loc[sell, 'sell_tag'] = 'sell_tail+' + df['streak_max'].astype(str)
