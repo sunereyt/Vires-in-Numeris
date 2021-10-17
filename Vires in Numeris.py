@@ -1,3 +1,4 @@
+from typing import Tuple
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
@@ -14,20 +15,19 @@ log = logging.getLogger(__name__)
 class ViN(IStrategy):
     INTERFACE_VERSION = 2
 
+    stoploss_count: int = 0
     write_to_txt = False
     f_buys = './user_data/vinbuys.txt'
     f_trades = './user_data/vintrades.txt'
     write_to_csv = False
     df_csv = './user_data/df.csv'
-    # buy_time_periods = (13, 14, 15, 16)
-    buy_time_periods = range(13, 16)
-    indicator_range = range(2, 17)
-    min_candle_vol: int = 1500
-    min_candle_vol_6: int = min_candle_vol * 4
+    buy_time_periods = (13, 14, 15)
+    indicator_range = range(2, 16)
+    min_candle_vol: int = 0
     custom_buy_info = {}
 
     minimal_roi = {"0": 10}
-    stoploss = -0.16
+    stoploss = -0.12
     stoploss_on_exchange = True
     trailing_stop = False
     use_custom_stoploss = False
@@ -37,35 +37,13 @@ class ViN(IStrategy):
     sell_profit_only = False
     startup_candle_count: int = 36
 
-    d_buy = {  #    mfi        cmf          cti      tail
-               3: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               4: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               5: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               6: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               7: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               8: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-               9: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              10: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              11: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              12: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              13: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              14: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              15: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              16: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              17: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              18: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              19: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-              30: [0, 30, -0.95, 0.50, -0.95, -0.50, 1.001],
-            }
-
     def populate_indicators(self, df: DataFrame, metadata: dict) -> DataFrame:
         if len(df) < self.startup_candle_count:
             return df
 
-        positive = (df['close'] - df['open']).ge(0)
-        df['uppertail'] = (df['high'] / df['close']).where(positive, df['high'] / df['open'])
-        df['lowertail'] = (df['open'] / df['low']).where(positive, df['close'] / df['low'])
-        df['volume_6'] = df['volume'].rolling(6).sum()
+        df['positive'] = (df['close'] - df['open']).ge(0)
+        df['uppertail'] = (df['high'] / df['close']).where(df['positive'], df['high'] / df['open'])
+        df['lowertail'] = (df['open'] / df['low']).where(df['positive'], df['close'] / df['low'])
         df['candle_count'] = df['volume'].rolling(window=self.startup_candle_count, min_periods=self.startup_candle_count).count()
         df['close_change'] = df['close'].pct_change()
 
@@ -79,12 +57,13 @@ class ViN(IStrategy):
 
         ef = df['close'].reset_index()
         for i in self.indicator_range:
+            df[f"volume_{i}"] = df['volume'].rolling(window=i, min_periods=i).sum()
             df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
             upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
-            mfi = MFI(df, length=i)
+            mfi = mfi_enh(df, length=i)
             df[f"mfi_{i}"] = mfi
             # df[f"mfi_corr_{i}"] = ef['index'].rolling(i).corr(mfi, method='spearman')
-            df[f"cti_{i}"] = ef['index'].rolling(i).corr(ef['close'], method='spearman')
+            df[f"cti_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
 
         return df.copy()
 
@@ -93,13 +72,11 @@ class ViN(IStrategy):
             return df
 
         df.loc[:, 'buy_tag'] = ''
-        conditions = []
-        conditions.append(df['candle_count'].ge(self.startup_candle_count))
-        conditions.append(df['volume'].ge(self.min_candle_vol))
-        conditions.append(df['volume_6'].ge(self.min_candle_vol_6))
-
         for i in self.buy_time_periods:
             buy_conditions = []
+            buy_conditions.append(df['candle_count'].ge(self.startup_candle_count))
+            buy_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
+            buy_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
             if i == min(self.buy_time_periods):
                 buy_conditions.append(df['streak_min'].between(-i, -3))
             elif i == max(self.buy_time_periods):
@@ -107,29 +84,16 @@ class ViN(IStrategy):
             else:
                 buy_conditions.append(df['streak_min'].eq(-i))
             buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
-            buy_conditions.append(df[f"mfi_{i}"].between(0, 7 + i))
-            buy_conditions.append(df[f"cti_{i}"].between(-0.95, -0.75))
+            # use fixed mom value if using streak_min value?
+            buy_conditions.append(df[f"mfi_{i}"].le(20)) #between(0, 7 + i))
+            buy_conditions.append(df[f"cti_{i}"].le(-0.80))
             buy_conditions.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
             buy_conditions.append(df['lowertail'].ge(1.002))
-            
-            # buy_par = self.d_buy[i]
-            # buy_conditions.append(df['streak_min'].eq(-i))
-            # buy_condition.append(df[f"mfi_{i}"].between(buy_par[0], buy_par[1]))
-            # buy_condition.append(df[f"cmf_{i}"].between(buy_par[2], buy_par[3]))
-            # buy_condition.append(df[f"cti_{i}"].between(buy_par[4], buy_par[5]))
-            # buy_condition.append(df['lowertail'].ge(buy_par[6]))
-
-            # corr_conditions = []
-            # corr_conditions.append(df[f"mfi_corr_{i}"].gt(0.0))
-            # corr_conditions.append(df[f"cmf_corr_{i}"].gt(0.0))
-            # corr_conditions.append(df[f"cti_{i-1}"].gt(df[f"cti_{i}"]))
-            # buy_conditions.append(sum(corr_conditions) >= 2)
 
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] = 'buy' + df['streak_min'].astype(str)
 
-        conditions.append(df.loc[:, 'buy_tag'] != '')
-        df.loc[:, 'buy'] = reduce(lambda x, y: x & y, conditions)
+        df.loc[:, 'buy'] = df['buy_tag'] != ''
 
         df_buy: DataFrame = df.loc[df.loc[:, 'buy'], ['date', 'buy_tag', 'buy']]
         for index, row in df_buy.iterrows():
@@ -156,48 +120,74 @@ class ViN(IStrategy):
             return df
 
         df.loc[:, 'sell_tag'] = ''
-        try:
-            candles_between = df.index[-1] - df.loc[df['buy_tag'] != ''].index[-1]
-        except:
-            candles_between = self.startup_candle_count
-        time_periods = range(5, min(candles_between, 16))
+        df.loc[:, 'stop_tag'] = ''
+        time_periods = range(4, 16)
         for i in time_periods:
             sell_conditions = []
             sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
-            sell_conditions.append(df['volume'].ge(self.min_candle_vol))
-            sell_conditions.append(df['volume_6'].ge(self.min_candle_vol_6))
-            if i == min(time_periods):
-                sell_conditions.append(df['streak_max'].between(3, i))
-            elif i == max(time_periods):
+            sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.4))
+            sell_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
+            if i == max(time_periods):
                 sell_conditions.append(df['streak_max'].ge(i))
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
-            sell_conditions.append(df[f"mfi_{i}"].between(96 - i, 100))
-            sell_conditions.append(df[f"cti_{i}"].between(0.70, 0.90))
+            sell_conditions.append(df[f"mfi_{i}"].ge(96))
+            sell_conditions.append(df[f"cti_{i}"].between(0.76, 0.96))
             sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
-            # sell_conditions.append(df['uppertail'].ge(1.002))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
             df.loc[sell, 'sell_tag'] = 'sell+' + df['streak_max'].astype(str)
 
-        time_periods = range(4, min(candles_between, 16))
         for i in time_periods:
             sell_conditions = []
             sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
-            sell_conditions.append(df['volume'].ge(self.min_candle_vol))
+            sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.4))
+            sell_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
+            if i == max(time_periods):
+                sell_conditions.append(df['streak_max'].ge(i))
+            else:
+                sell_conditions.append(df['streak_max'].eq(i))
+            sell_conditions.append(df[f"mfi_{i}"].ge(96))
+            sell_conditions.append(df[f"cti_{i}"].gt(0.96))
+            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
+            sell_conditions.append(df['uppertail'].ge(1.01))
+
+            sell = reduce(lambda x, y: x & y, sell_conditions)
+            df.loc[sell, 'sell_tag'] = 'sell_tail+' + df['streak_max'].astype(str)
+
+        time_periods = range(3, 16)
+        for i in time_periods:
+            sell_conditions = []
+            sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
+            sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
+            if i == max(time_periods):
+                sell_conditions.append(df['streak_min'].le(-i))
+            else:
+                sell_conditions.append(df['streak_min'].eq(-i))
+            sell_conditions.append(df[f"mfi_{i}"].ge(40))
+            sell_conditions.append(df[f"cti_{i}"].le(-0.75))
+            sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
+            sell_conditions.append(df['close_change'].le(-0.01))
+
+            sell = reduce(lambda x, y: x & y, sell_conditions)
+            df.loc[sell, 'sell_tag'] = 'sell' + df['streak_min'].astype(str)
+
+        for i in time_periods:
+            sell_conditions = []
+            sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
+            sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
             if i == min(time_periods):
-                sell_conditions.append(df['streak_min'].between(-i, -3))
+                sell_conditions.append(df['streak_min'].between(-i, -2))
             elif i == max(time_periods):
                 sell_conditions.append(df['streak_min'].le(-i))
             else:
                 sell_conditions.append(df['streak_min'].eq(-i))
-            sell_conditions.append(df[f"mfi_{i}"].between(35 - i, 100))
-            sell_conditions.append(df[f"cti_{i}"].le(-0.50))
-            sell_conditions.append(df[f"cti_{i-1}"].gt(df[f"cti_{i}"]))
+            sell_conditions.append(df[f"cti_{i}"].le(0))
+            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
             sell_conditions.append(df['close_change'].le(0))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = 'sell' + df['streak_min'].astype(str)
+            df.loc[sell, 'stop_tag'] = 'stop' + df['streak_min'].astype(str)
 
         df.loc[:, 'sell'] = False
         return df
@@ -205,31 +195,42 @@ class ViN(IStrategy):
     def custom_sell(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        df_trade: DataFrame = df[df['date'] >= trade_open_date]
-        if df_trade.empty:
+        candle_1 = df.iloc[-1]
+        sell_tag, stop_tag, current_rate = candle_1['sell_tag'], candle_1['stop_tag'], candle_1['close']
+        current_profit = (current_rate - trade.open_rate) / trade.open_rate
+        if (sell_tag == '' and stop_tag == '') or (-0.04 <= current_profit <= 0.015):
             return None
 
-        buy_tag = 'empty'
         if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
             buy_tag = trade.buy_tag
-
-        candle_1 = df_trade.iloc[-1]
-        current_rate = candle_1['close']
-        current_profit = (current_rate - trade.open_rate) / trade.open_rate
-        sell_tag = candle_1['sell_tag']
-        if current_profit < -0.015 and 'sell-' in sell_tag:
-            return f"{sell_tag} ({buy_tag})"
-        if current_profit > 0.015 and 'sell' in sell_tag:
+        trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
+        df_trade: DataFrame = df[df['date'] >= trade_open_date]
+        candles_between = df_trade.index[-1] - df_trade.index[0]
+        if current_profit < -0.04 and 'stop' in stop_tag:
             if candle_1['buy']:
-                log.info(f"custom_sell: sell for pair {pair} with sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled.")
+                log.info(f"custom_sell: stop for pair {pair} with stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy with buy_tag {candle_1['buy_tag']}.")
                 return None
             else:
-                return f"{sell_tag} ({buy_tag})"
+                n = int("".join(filter(str.isdigit, stop_tag)))
+                if n <= candles_between + 1:
+                    self.stoploss_count += 1
+                    log.info(f"custom_sell: stoploss # {self.stoploss_count} for pair {pair} with loss {current_profit:.2n}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
+                    return f"{stop_tag} ({buy_tag})"
+
+        if current_profit > 0.015 and 'sell' in sell_tag:
+            if candle_1['buy']:
+                log.info(f"custom_sell: sell for pair {pair} with profit {current_profit}, sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled.")
+                return None
+            else:
+                n = int("".join(filter(str.isdigit, sell_tag)))
+                if n <= candles_between:
+                    return f"{sell_tag} ({buy_tag})"
 
         return None
 
     def bot_loop_start(self, **kwargs) -> None:
+        self.min_candle_vol = self.config['stake_amount']
+    
         if self.config['runmode'].value not in ('live', 'dry_run'):
             with open(self.f_buys, 'w') as f:
                 print('pair;date open;trade open rate;buy tags;close;mfi;cmf;cti', file=f)
@@ -282,7 +283,6 @@ class ViN(IStrategy):
             trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
             trade_close_date = timeframe_to_prev_date(self.timeframe, trade.close_date_utc)
             df_trade = df.loc[(df['date'].ge(trade_open_date)) & (df['date'].le(trade_close_date))]
-
             if df_trade.empty:
                 log.warning(f"confirm_trade_exit: Empty trade dataframe for pair {pair} on trade with open date {trade_open_date} and close date {trade_close_date}.")
                 return False
@@ -300,14 +300,20 @@ class ViN(IStrategy):
 
         return True
 
-def CMF(df: DataFrame, length: int) -> Series:
-    mfv = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low']) * df['volume']
+def cmf_enh(df: DataFrame, length: int) -> Series:
+    max_tail = 1.05
+    hi = df['high'].where(df['uppertail'] <= max_tail, max_tail * df['close'].where(df['positive'], df['open']))
+    lo = df['low'].where(df['lowertail'] <= max_tail, df['open'].where(df['positive'], df['close']) / max_tail)
+    mfv = ((df['close'] - lo) - (hi - df['close'])) / (hi - lo) * df['volume']
 
     return mfv.rolling(window=length, min_periods=length).sum() / df['volume'].rolling(window=length, min_periods=length).sum()
 
-def MFI(df: DataFrame, length: int) -> Series:
-    hlc3 = (df['high'] + df['low'] + df['close']) / 3
-    mf = hlc3 * df['volume']
+def mfi_enh(df: DataFrame, length: int) -> Series:
+    max_tail = 1.05
+    hi = df['high'].where(df['uppertail'] <= max_tail, max_tail * df['close'].where(df['positive'], df['open']))
+    lo = df['low'].where(df['lowertail'] <= max_tail, df['open'].where(df['positive'], df['close']) / max_tail)
+    hlc3 = (hi + lo + df['close']) / 3
+    mf: Series = hlc3 * df['volume']
     mfp = mf.where(hlc3.gt(hlc3.shift(1)), 0).rolling(window=length, min_periods=length).sum()
     mfn = mf.where(hlc3.lt(hlc3.shift(1)), 0).rolling(window=length, min_periods=length).sum()
 
@@ -317,8 +323,8 @@ def MFI(df: DataFrame, length: int) -> Series:
 class ViN1(ViN):
     b = __name__.lower()
     if b not in ('vin'):
-        n = int("".join(filter(str.isdigit, b)))
-        buy_time_periods = (n,)
+    # to check each time_period use confirm_trade_entry
+        buy_period = int("".join(filter(str.isdigit, b)))
 
 class ViN3(ViN1):
     pass
