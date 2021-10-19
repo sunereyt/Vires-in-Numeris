@@ -1,4 +1,3 @@
-from typing import Tuple
 from freqtrade.strategy.interface import IStrategy
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
@@ -21,8 +20,7 @@ class CR(IStrategy):
     f_trades = './user_data/crtrades.txt'
     write_to_csv = False
     df_csv = './user_data/df.csv'
-    buy_time_periods = range(4, 19)
-    indicator_range = range(2, 19)
+    indicator_range = range(2, 16)
     min_candle_vol: int = 0
     custom_buy_info = {}
 
@@ -35,7 +33,7 @@ class CR(IStrategy):
     process_only_new_candles = True
     use_sell_signal = True
     sell_profit_only = False
-    startup_candle_count: int = 36
+    startup_candle_count: int = 18
 
     def populate_indicators(self, df: DataFrame, metadata: dict) -> DataFrame:
         if len(df) < self.startup_candle_count:
@@ -55,15 +53,13 @@ class CR(IStrategy):
         df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
         df.drop(columns=['updown', 'streak_1', 'streak_2', 'streak_3'])
 
-        ef = df['close'].reset_index()
+        ef = df[['close', 'uppertail', 'lowertail']].reset_index()
         for i in self.indicator_range:
             df[f"volume_{i}"] = df['volume'].rolling(window=i, min_periods=i).sum()
             df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
-            upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
-            # df[f"mfi_{i}"] = mfi_enh(df, length=i)
-            # df[f"cmf_{i}"] = cmf_enh(df, length=i)
-            df[f"cti_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
-            # df[f"mfi_corr_{i}"] = ef['index'].rolling(i).corr(mfi, method='spearman')
+            df[f"mom_{i}_up"], mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
+            df[f"mfi_{i}"] = mfi_enh(df, length=i)
+            df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
 
         return df.copy()
 
@@ -72,23 +68,18 @@ class CR(IStrategy):
             return df
 
         df.loc[:, 'buy_tag'] = ''
-        for i in self.buy_time_periods:
+        buy_time_periods = (13,)
+        for i in buy_time_periods:
             buy_conditions = []
             buy_conditions.append(df['candle_count'].ge(self.startup_candle_count))
             buy_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
             buy_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
-            # if i == min(self.buy_time_periods):
-                # buy_conditions.append(df['streak_min'].between(-i, -3))
-            if i == max(self.buy_time_periods):
-                buy_conditions.append(df['streak_min'].le(-i))
-            else:
-                buy_conditions.append(df['streak_min'].eq(-i))
-            buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
-            # buy_conditions.append(df[f"mfi_{i}"].le(20))
-            buy_conditions.append(df[f"cti_{i}"].le(-0.90))
-            buy_conditions.append(df[f"cti_{i-1}"].ge(df[f"cti_{i}"]))
-            buy_conditions.append(df[f"cti_{i-2}"].ge(df[f"cti_{i-1}"]))
-            # buy_conditions.append(df['lowertail'].ge(1.002))
+            buy_conditions.append(df['streak_min'].le(-1))
+            buy_conditions.append((df[f"mom_{i}"].shift(1) / df[f"mom_{i}_low"].shift(1)).between(1.1, 1.2))
+            buy_conditions.append(df[f"mfi_{i}"].shift(1).le(18))
+            buy_conditions.append(df[f"close_corr_{i}"].shift(1).between(-0.95, -0.75))
+            buy_conditions.append(df['close_change'].lt(0))
+            buy_conditions.append(df['close_change'].gt(df['close_change'].shift(1)))
 
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] = 'buy' + df['streak_min'].astype(str)
@@ -121,7 +112,7 @@ class CR(IStrategy):
 
         df.loc[:, 'sell_tag'] = ''
         df.loc[:, 'stop_tag'] = ''
-        time_periods = range(4, 19)
+        time_periods = range(4, 16)
         for i in time_periods:
             sell_conditions = []
             sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
@@ -132,13 +123,14 @@ class CR(IStrategy):
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
             sell_conditions.append(df['streak_max'].ne(df['streak_min']))
-            sell_conditions.append(df[f"cti_{i}"].between(0.70, 0.90))
-            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
-            sell_conditions.append(df[f"cti_{i-2}"].le(df[f"cti_{i-1}"]))
+            sell_conditions.append(df['streak_min'].ne(-1))
+            sell_conditions.append(df[f"close_corr_{i}"].between(0.80 - i / 100, 0.90))
+            sell_conditions.append(df[f"close_corr_{i-1}"].lt(df[f"close_corr_{i}"]))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
             df.loc[sell, 'sell_tag'] = 'sell+' + df['streak_max'].astype(str)
 
+        time_periods = range(3, 16)
         for i in time_periods:
             sell_conditions = []
             sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
@@ -148,15 +140,13 @@ class CR(IStrategy):
                 sell_conditions.append(df['streak_max'].ge(i))
             else:
                 sell_conditions.append(df['streak_max'].eq(i))
-            sell_conditions.append(df[f"cti_{i}"].gt(0.90))
-            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
-            sell_conditions.append(df[f"cti_{i-2}"].le(df[f"cti_{i-1}"]))
+            sell_conditions.append(df[f"close_corr_{i}"].gt(0.90))
+            sell_conditions.append(df[f"close_corr_{i-1}"].lt(df[f"close_corr_{i}"]))
             sell_conditions.append(df['uppertail'].ge(1.02))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = 'sell_tail+' + df['streak_max'].astype(str)
+            df.loc[sell, 'sell_tag'] = 'tail_sell+' + df['streak_max'].astype(str)
 
-        time_periods = range(3, 19)
         for i in time_periods:
             sell_conditions = []
             sell_conditions.append(df['candle_count'].ge(self.startup_candle_count))
@@ -165,8 +155,8 @@ class CR(IStrategy):
                 sell_conditions.append(df['streak_min'].le(-i))
             else:
                 sell_conditions.append(df['streak_min'].eq(-i))
-            sell_conditions.append(df[f"cti_{i}"].le(-0.50))
-            sell_conditions.append(df[f"cti_{i-1}"].lt(df[f"cti_{i}"]))
+            sell_conditions.append(df[f"close_corr_{i}"].le(-0.50))
+            sell_conditions.append(df[f"close_corr_{i-1}"].lt(df[f"close_corr_{i}"]))
             sell_conditions.append(df['close_change'].le(-0.01))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
@@ -178,12 +168,12 @@ class CR(IStrategy):
             sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
             if i == min(time_periods):
                 sell_conditions.append(df['streak_min'].between(-i, -2))
-            elif i == max(time_periods):
+            if i == max(time_periods):
                 sell_conditions.append(df['streak_min'].le(-i))
             else:
                 sell_conditions.append(df['streak_min'].eq(-i))
-            sell_conditions.append(df[f"cti_{i}"].le(0))
-            sell_conditions.append(df[f"cti_{i-1}"].le(df[f"cti_{i}"]))
+            sell_conditions.append(df[f"close_corr_{i}"].le(0))
+            sell_conditions.append(df[f"close_corr_{i-1}"].le(df[f"close_corr_{i}"]))
             sell_conditions.append(df['close_change'].le(0))
 
             sell = reduce(lambda x, y: x & y, sell_conditions)
@@ -208,13 +198,13 @@ class CR(IStrategy):
         candles_between = df_trade.index[-1] - df_trade.index[0]
         if current_profit < -0.04 and 'stop' in stop_tag:
             if candle_1['buy']:
-                log.info(f"custom_sell: stop for pair {pair} with stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy with buy_tag {candle_1['buy_tag']}.")
+                log.info(f"custom_sell: stop for pair {pair} with profit {current_profit}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
                 return None
             else:
                 n = int("".join(filter(str.isdigit, stop_tag)))
                 if n <= candles_between + 1:
                     self.stoploss_count += 1
-                    log.info(f"custom_sell: stoploss # {self.stoploss_count} for pair {pair} with loss {current_profit:.2n}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
+                    log.info(f"custom_sell: stoploss # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
                     return f"{stop_tag} ({buy_tag})"
 
         if current_profit > 0.015 and 'sell' in sell_tag:
@@ -232,10 +222,11 @@ class CR(IStrategy):
         self.min_candle_vol = self.config['stake_amount']
     
         if self.config['runmode'].value not in ('live', 'dry_run'):
-            with open(self.f_buys, 'w') as f:
-                print('pair;date open;trade open rate;buy tags;close;mfi;cmf;cti', file=f)
-            with open(self.f_trades, 'w') as f:
-                print('pair;date open;trade open rate;date close;trade rate;buy tags;sell reason;profit;max profit;max loss;max rate;min rate;max close date;min close date', file=f)
+            if self.write_to_txt:
+                with open(self.f_buys, 'w') as f:
+                    print('pair;date open;trade open rate;buy tags;close;mfi;cmf;close_corr_', file=f)
+                with open(self.f_trades, 'w') as f:
+                    print('pair;date open;trade open rate;date close;trade rate;buy tags;sell reason;profit;max profit;max loss;max rate;min rate;max close date;min close date', file=f)
             if self.write_to_csv:
                 with open(self.df_csv, 'w') as f:
                     pass
@@ -266,8 +257,8 @@ class CR(IStrategy):
                 indicator = []
                 period = 14
                 indicator.append(candle_1[f"mfi_{period}"])
-                indicator.append(candle_1[f"cti_{period}"])
-                indicator.append(candle_2[f"cti_{period}"])
+                indicator.append(candle_1[f"close_corr_{period}"])
+                indicator.append(candle_2[f"close_corr_{period}"])
                 with open(self.f_buys, 'a') as f:
                     print(f"{pair};{buy_candle_date};{rate:.10n};{buy_tags};{close_1_price:.10n};{close_2_price:.10n}", *indicator, sep=';', file=f)
         else:

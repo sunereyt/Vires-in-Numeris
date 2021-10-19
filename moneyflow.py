@@ -14,11 +14,10 @@ log = logging.getLogger(__name__)
 class MF(IStrategy):
     INTERFACE_VERSION = 2
 
-    stoploss_count: int = 0
-    buy_time_periods = (13, 14, 15)
     indicator_range = range(2, 16)
     min_candle_vol: int = 0
     custom_buy_info = {}
+    stoploss_count: int = 0
 
     minimal_roi = {"0": 10}
     stoploss = -0.99
@@ -54,8 +53,7 @@ class MF(IStrategy):
             df[f"volume_{i}"] = df['volume'].rolling(window=i, min_periods=i).sum()
             df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
             upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
-            mfi = mfi_enh(df, length=i)
-            df[f"mfi_{i}"] = mfi
+            df[f"mfi_{i}"] = mfi_enh(df, length=i)
             df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
 
         return df.copy()
@@ -65,21 +63,16 @@ class MF(IStrategy):
             return df
 
         df.loc[:, 'buy_tag'] = ''
-        for i in self.buy_time_periods:
+        buy_time_periods = (13,)
+        for i in buy_time_periods:
             buy_conditions = []
             buy_conditions.append(df['candle_count'].ge(self.startup_candle_count))
             buy_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
             buy_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
-            if i == min(self.buy_time_periods):
-                buy_conditions.append(df['streak_min'].between(-i, -3))
-            elif i == max(self.buy_time_periods):
-                buy_conditions.append(df['streak_min'].le(-i))
-            else:
-                buy_conditions.append(df['streak_min'].eq(-i))
+            buy_conditions.append(df['streak_min'].le(-1))
             buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
             buy_conditions.append(df[f"mfi_{i}"].le(18))
-            buy_conditions.append(df[f"close_corr_{i}"].between(-0.95, -0,75)) #-0.90 + i / 100))
-            buy_conditions.append(df[f"close_corr_{i-1}"].ge(df[f"close_corr_{i}"]))
+            buy_conditions.append(df[f"close_corr_{i}"].between(-0.95, -0.75))
             buy_conditions.append(df['lowertail'].ge(1.002))
 
             buy = reduce(lambda x, y: x & y, buy_conditions)
