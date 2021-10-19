@@ -11,10 +11,11 @@ import locale
 locale.setlocale(category=locale.LC_ALL, locale='')
 log = logging.getLogger(__name__)
 
-class MF(IStrategy):
+class ViN(IStrategy):
     INTERFACE_VERSION = 2
 
-    indicator_range = range(2, 16)
+    buy_time_period = 15
+    indicator_range = range(2, 19)
     min_candle_vol: int = 0
     custom_buy_info = {}
     stoploss_count: int = 0
@@ -28,7 +29,7 @@ class MF(IStrategy):
     process_only_new_candles = True
     use_sell_signal = True
     sell_profit_only = False
-    startup_candle_count: int = 36
+    startup_candle_count: int = 18
 
     def populate_indicators(self, df: DataFrame, metadata: dict) -> DataFrame:
         if len(df) < self.startup_candle_count:
@@ -47,13 +48,15 @@ class MF(IStrategy):
         df['streak_min'] = df[['streak_1', 'streak_2', 'streak_3']].min(axis=1)
         df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
         df.drop(columns=['updown', 'streak_1', 'streak_2', 'streak_3'])
+        i = self.buy_time_period
+        df[f"mfi_{i}"] = mfi_enh(df, length=i)
+        df[f"cmf_{i}"] = cmf_enh(df, length=i)
+        df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
+        up, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
 
-        ef = df['close'].reset_index()
+        ef = df[['close', 'uppertail', 'lowertail']].reset_index()
         for i in self.indicator_range:
             df[f"volume_{i}"] = df['volume'].rolling(window=i, min_periods=i).sum()
-            df[f"mom_{i}"] = ta.MOM(df, timeperiod=i)
-            upp, mid, df[f"mom_{i}_low"] = ta.BBANDS(df[f"mom_{i}"], timeperiod=i, nbdevup=2.0, nbdevdn=2.0, matype=0)
-            df[f"mfi_{i}"] = mfi_enh(df, length=i)
             df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
 
         return df.copy()
@@ -63,20 +66,19 @@ class MF(IStrategy):
             return df
 
         df.loc[:, 'buy_tag'] = ''
-        buy_time_periods = (13,)
-        for i in buy_time_periods:
-            buy_conditions = []
-            buy_conditions.append(df['candle_count'].ge(self.startup_candle_count))
-            buy_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
-            buy_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
-            buy_conditions.append(df['streak_min'].le(-1))
-            buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
-            buy_conditions.append(df[f"mfi_{i}"].le(18))
-            buy_conditions.append(df[f"close_corr_{i}"].between(-0.95, -0.75))
-            buy_conditions.append(df['lowertail'].ge(1.002))
+        i = 15
+        buy_conditions = []
+        buy_conditions.append(df['candle_count'].ge(self.startup_candle_count))
+        buy_conditions.append(df['volume'].ge(self.min_candle_vol * 1.2))
+        buy_conditions.append(df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8))
+        buy_conditions.append(df['streak_min'].le(-1))
+        buy_conditions.append((df[f"mom_{i}"] / df[f"mom_{i}_low"]).between(1.1, 1.2))
+        buy_conditions.append(df[f"mfi_{i}"].le(18))
+        buy_conditions.append(df[f"close_corr_{i}"].between(-0.95, -0.75))
+        buy_conditions.append(df['lowertail'].ge(1.002))
 
-            buy = reduce(lambda x, y: x & y, buy_conditions)
-            df.loc[buy, 'buy_tag'] = 'buy' + df['streak_min'].astype(str)
+        buy = reduce(lambda x, y: x & y, buy_conditions)
+        df.loc[buy, 'buy_tag'] = 'buy' + df['streak_min'].astype(str)
 
         df.loc[:, 'buy'] = df['buy_tag'] != ''
 
