@@ -185,7 +185,11 @@ class ViNT(IStrategy):
         candle_1 = df.iloc[-1]
         sell_tag, stop_tag, current_rate = candle_1['sell_tag'], candle_1['stop_tag'], candle_1['close']
         current_profit = (current_rate - trade.open_rate) / trade.open_rate
-        if (sell_tag == '' and stop_tag == ''): # or (-0.04 <= current_profit <= 0.015):
+        if (sell_tag == '' and stop_tag == ''):
+            return None
+
+        if candle_1['buy']:
+            log.info(f"custom_sell: sell for pair {pair} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
             return None
 
         if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
@@ -193,34 +197,28 @@ class ViNT(IStrategy):
         trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
         df_trade: DataFrame = df[df['date'] >= trade_open_date]
         candles_between = df_trade.index[-1] - df_trade.index[0]
-        if current_profit < -0.04 and 'stop' in stop_tag:
-            if candle_1['buy']:
-                log.info(f"custom_sell: stop for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
-                return None
-            else:
-                n = int("".join(filter(str.isdigit, stop_tag)))
-                if n <= candles_between + 1:
-                    self.stoploss_count += 1
-                    log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
-                    return f"{stop_tag} ({buy_tag})"
 
-        if -0.015 <= current_profit <= 0.015 and 'stop' in stop_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
-            if candle_1['buy']:
-                log.info(f"custom_sell: sideways stop for pair {pair} with profit {round(current_profit, 2)}, sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled because of buy signal {candle_1['buy_tag']}.")
-                return None
-            else:
-                n = int("".join(filter(str.isdigit, stop_tag)))
-                if n <= candles_between:
-                    return f"sideways_{stop_tag} ({buy_tag})"
+        if current_profit < -0.04 and 'stop' in stop_tag:
+            n = int("".join(filter(str.isdigit, stop_tag)))
+            if n <= candles_between + 1:
+                self.stoploss_count += 1
+                log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
+                return f"{stop_tag} ({buy_tag})"
+
+        # if -0.04 <= current_profit <= -0.015 and 'stop' in stop_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
+        #     n = int("".join(filter(str.isdigit, stop_tag)))
+        #     if n <= candles_between + 1:
+        #         return f"sideways_{stop_tag} ({buy_tag})"
+
+        if current_profit <= 0.015 and 'sell-' in sell_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
+            n = int("".join(filter(str.isdigit, stop_tag)))
+            if n <= candles_between:
+                return f"sideways_{sell_tag} ({buy_tag})"
 
         if current_profit > 0.015 and 'sell' in sell_tag:
-            if candle_1['buy']:
-                log.info(f"custom_sell: sell for pair {pair} with profit {round(current_profit, 2)}, sell_tag {sell_tag} and buy_tag {buy_tag} on candle {candle_1['date']} is cancelled.")
-                return None
-            else:
-                n = int("".join(filter(str.isdigit, sell_tag)))
-                if n <= candles_between:
-                    return f"{sell_tag} ({buy_tag})"
+            n = int("".join(filter(str.isdigit, sell_tag)))
+            if n <= candles_between:
+                return f"{sell_tag} ({buy_tag})"
 
         return None
 
