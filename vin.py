@@ -19,6 +19,7 @@ class ViN(IStrategy):
     min_candle_vol: int = 0
     custom_buy_info = {}
     stoploss_count: int = 0
+    sideways_count: int = 0
     stoploss_levup_count: int = 0
 
     minimal_roi = {"0": 100}
@@ -51,7 +52,6 @@ class ViN(IStrategy):
 
         i = self.startup_candle_count
         df[f"candle_count_{i}"] = df['volume'].rolling(window=i, min_periods=i).count()
-        df[f"close_change_{i}"] = df['close'].rolling(window=i, min_periods=i).max() / df['close'].rolling(window=i, min_periods=i).min()
 
         i = self.lookback_candles
         df[f"mfi_{i}"] = mfi_enh(df, length=i)
@@ -88,13 +88,12 @@ class ViN(IStrategy):
             buy_date = row['date']
             if buy_date not in self.custom_buy_info:
                 self.custom_buy_info[buy_date] = {}
-                self.custom_buy_info[buy_date][metadata['pair']] = row['buy_tag']
                 self.custom_buy_info[buy_date]['buy_tags'] = row['buy_tag']
                 self.custom_buy_info[buy_date]['buy_signals'] = 1
             else:
-                self.custom_buy_info[buy_date][metadata['pair']] = row['buy_tag']
                 self.custom_buy_info[buy_date]['buy_tags'] += row['buy_tag']
                 self.custom_buy_info[buy_date]['buy_signals'] += 1
+            self.custom_buy_info[buy_date][metadata['pair']] = row['buy_tag']
 
         return df
 
@@ -199,23 +198,25 @@ class ViN(IStrategy):
             n = int("".join(filter(str.isdigit, stop_tag)))
             if n <= candles_between + 1:
                 self.stoploss_count += 1
-                log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
+                log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} on candle {candle_1['date']}.")
                 return f"{stop_tag} ({buy_tag})"
 
-        if -0.04 <= current_profit <= 0.015 and 'stop' in stop_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
-            n = int("".join(filter(str.isdigit, stop_tag)))
-            if n <= candles_between + 1:
-                return f"sideways_{stop_tag} ({buy_tag})"
-
-        if current_profit <= 0.015 and 'sell-' in sell_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
-            n = int("".join(filter(str.isdigit, stop_tag)))
+        close_diff = df_trade['close'].max() / df_trade['close'].min()
+        mfi = mfi_enh(df, length=candles_between)
+        if current_profit < 0.0 and 'sell' in sell_tag and len(df_trade) >= self.startup_candle_count and close_diff <= 1.03 and mfi.iat[-1] >= 54:
+            n = int("".join(filter(str.isdigit, sell_tag)))
             if n <= candles_between:
+                self.sideways_count += 1
+                log.info(f"custom_sell: sideways sell # {self.sideways_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} on candle {candle_1['date']}.")
                 return f"sideways_{sell_tag} ({buy_tag})"
 
         if current_profit > 0.015 and 'sell' in sell_tag:
             n = int("".join(filter(str.isdigit, sell_tag)))
             if n <= candles_between:
-                return f"{sell_tag} ({buy_tag})"
+                if 'sell+' in sell_tag:
+                    return f"{sell_tag} ({buy_tag})"
+                elif 'sell-' in sell_tag and mfi.iat[-1] >= 72:
+                    return f"{sell_tag} ({buy_tag})"
 
         return None
 

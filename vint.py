@@ -205,15 +205,16 @@ class ViNT(IStrategy):
                 log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)}, stop_tag {stop_tag} and buy_tag {buy_tag} on candle {candle_1['date']}.")
                 return f"{stop_tag} ({buy_tag})"
 
-        # if -0.04 <= current_profit <= -0.015 and 'stop' in stop_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
-        #     n = int("".join(filter(str.isdigit, stop_tag)))
-        #     if n <= candles_between + 1:
-        #         return f"sideways_{stop_tag} ({buy_tag})"
-
-        if current_profit <= 0.015 and 'sell-' in sell_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
+        close_diff = df_trade['close'].rolling(window=candles_between, min_periods=candles_between).max() / df_trade['close'].rolling(window=candles_between, min_periods=candles_between).min()
+        if -0.04 <= current_profit <= 0.015 and 'stop' in stop_tag and len(df_trade) >= self.startup_candle_count and close_diff.iloc[-1] <= 1.015:
             n = int("".join(filter(str.isdigit, stop_tag)))
-            if n <= candles_between:
-                return f"sideways_{sell_tag} ({buy_tag})"
+            if n <= candles_between + 1:
+                return f"sideways_{stop_tag} ({buy_tag})"
+
+        # if current_profit <= 0.015 and 'sell-' in sell_tag and len(df_trade) >= self.startup_candle_count and candle_1[f"close_change_{self.startup_candle_count}"] <= 1.03:
+        #     n = int("".join(filter(str.isdigit, stop_tag)))
+        #     if n <= candles_between:
+        #         return f"sideways_{sell_tag} ({buy_tag})"
 
         if current_profit > 0.015 and 'sell' in sell_tag:
             n = int("".join(filter(str.isdigit, sell_tag)))
