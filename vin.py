@@ -97,6 +97,14 @@ class ViN(IStrategy):
         return df
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
+        df.loc[:, 'mom_tag'] = ''
+        sell_conditions = []
+        sell_conditions.append(df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count))
+        sell_conditions.append(df['volume'].ge(self.min_candle_vol * 1.4))
+        sell_conditions.append(df['streak_min'].ne(-1))
+        sell = reduce(lambda x, y: x & y, sell_conditions)
+        df.loc[sell, 'mom_tag'] = 'sell+' + df['streak_max'].astype(str)
+
         df.loc[:, 'sell_tag'] = ''
         time_periods = range(3, self.lookback_candles + 1)
         for i in time_periods:
@@ -179,6 +187,15 @@ class ViN(IStrategy):
         sell_tag, stop_tag, current_rate = candle_1['sell_tag'], candle_1['stop_tag'], candle_1['close']
         current_profit = (current_rate - trade.open_rate) / trade.open_rate
         sell_reason = None
+
+        mom_tag = candle_1['mom_tag']
+        if 'sell' in mom_tag and current_profit > 0.015:
+            mom = ta.MOM(df, timeperiod=candles_between)
+            up, mid, low = ta.BBANDS(mom, timeperiod=candles_between, nbdevup=2.0, nbdevdn=2.0, matype=0)
+            if 1.2 >= mom / up >= 1.1:
+                log.info(f"custom_sell: sell for pair {pair} with profit/loss {round(current_profit, 2)} and mom_tag {mom_tag} on candle {candle_1['date']}.")
+                sell_reason = f"{mom_tag} ({buy_tag})"
+
         if 'stop' in stop_tag and current_profit < -0.04:
             n = int("".join(filter(str.isdigit, stop_tag)))
             if n <= candles_between:
