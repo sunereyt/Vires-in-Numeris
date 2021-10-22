@@ -146,9 +146,7 @@ class ViN(IStrategy):
                 df[f"close_corr_{i-1}"].lt(df[f"close_corr_{i}"]),
                 df['close'].pct_change().lt(0)
             ]
-            if i == min(time_periods):
-                sell_conditions.append(df['streak_min'].between(-i, -2))
-            elif i == max(time_periods):
+            if i == max(time_periods):
                 sell_conditions.append(df['streak_min'].le(-i))
             else:
                 sell_conditions.append(df['streak_min'].eq(-i))
@@ -178,7 +176,7 @@ class ViN(IStrategy):
                     current_profit: float, **kwargs):
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         trade_open_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        df_trade: DataFrame = df[df['date'] >= trade_open_date]
+        df_trade: DataFrame = df.loc[df['date'] >= trade_open_date]
         if hasattr(trade, 'buy_tag') and trade.buy_tag is not None:
             buy_tag = trade.buy_tag
         candles_between: np.int64 = df_trade.index[-1] - df_trade.index[0]
@@ -186,11 +184,10 @@ class ViN(IStrategy):
         candle_1: Series = df_trade.iloc[-1].copy()
         sell_tag: str = candle_1['sell_tag']
         stop_tag: str = candle_1['stop_tag']
-        current_rate = candle_1['close']
         if len(df_trade) < 2 or (stop_tag == '' and sell_tag == ''):
             return None
 
-        current_profit = (current_rate - trade.open_rate) / trade.open_rate
+        current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
         sell_reason = None
         if 'stop' in stop_tag and current_profit < -0.04:
             streaks = int("".join(filter(str.isdigit, stop_tag)))
@@ -199,26 +196,27 @@ class ViN(IStrategy):
                 log.info(f"custom_sell: stop # {self.stoploss_count} for pair {pair} with loss {round(current_profit, 2)} and stop_tag {stop_tag} on candle {candle_1['date']}.")
                 sell_reason = f"{stop_tag} ({buy_tag})"
         if sell_tag != '':
+            if 'corr' in sell_tag and len(df_trade) >= self.sideways_candles:
+                df_sw = df_trade['close'].tail(self.sideways_candles)
+                if df_sw.max() / df_sw.min() <= 1.03:
+                    log.info(f"custom_sell: sideways sell for pair {pair} with profit/loss {round(current_profit, 2)} and sell_tag {sell_tag} on candle {candle_1['date']}.")
+                    sell_reason = f"{sell_tag.replace('corr', 'sideways')} ({buy_tag})"
             streaks = int("".join(filter(str.isdigit, sell_tag)))
             if streaks <= candles_between:
-                mfi = mfi_enh(df, length=candles_between)
-                if mfi.iat[-1] > 54:
-                    if 'mom' not in sell_tag:
-                        close_diff = df_trade['close'].max() / df_trade['close'].min()
-                        if len(df_trade) >= self.sideways_candles and close_diff <= 1.03:
-                            sell_reason = f"{sell_tag.replace('corr', 'sideways')} ({buy_tag})"
-                        if current_profit > 0.015:
-                            sell_reason = f"{sell_tag} ({buy_tag})"
-                            log.info(f"custom_sell: sell for pair {pair} with profit {round(current_profit, 2)} and sell_tag {sell_tag} on candle {candle_1['date']}.")
-                    elif current_profit > 0.015 and candles_between >= 3:
+                mfi = mfi_enh(df_trade, length=candles_between)
+                if current_profit > 0.015 and mfi.iat[-1] > 66:
+                    if 'corr' in sell_tag:
+                        sell_reason = f"{sell_tag} ({buy_tag})"
+                        log.info(f"custom_sell: sell for pair {pair} with profit {round(current_profit, 2)} and sell_tag {sell_tag} on candle {candle_1['date']}.")
+                    elif 'mom' in sell_tag and candles_between >= 3:
                         ef = DataFrame()
-                        ef['mom'] = ta.MOM(df, timeperiod=candles_between)
-                        ef['up'], mid, low = ta.BBANDS(ef['mom'], timeperiod=candles_between, nbdevup=3.0, nbdevdn=2.0, matype=0)
+                        ef['mom'] = ta.MOM(df_trade, timeperiod=candles_between)
+                        ef['up'], mid, low = ta.BBANDS(ef['mom'], timeperiod=candles_between, nbdevup=2.0, nbdevdn=2.0, matype=0)
                         if ef['mom'].iat[-1] / ef['up'].iat[-1] >= 1.1:
                             sell_reason = f"{sell_tag} ({buy_tag})"
                             log.info(f"custom_sell: sell for pair {pair} with profit {round(current_profit, 2)} and sell_tag {sell_tag} on candle {candle_1['date']}.")
-
         candle_1['sell'] = sell_reason is not None
+
         return sell_reason
 
     def bot_loop_start(self, **kwargs) -> None:
@@ -245,15 +243,6 @@ class ViN(IStrategy):
             log.warning(f"confirm_trade_entry: No buy info for pair {pair} on candle {buy_candle_date}.")
 
         return True
-
-
-def cmf_enh(df: DataFrame, length: int) -> Series:
-    max_tail = 1.05
-    hi = df['high'].where(df['uppertail'] <= max_tail, max_tail * df['close'].where(df['green'], df['open']))
-    lo = df['low'].where(df['lowertail'] <= max_tail, df['open'].where(df['green'], df['close']) / max_tail)
-    mfv = ((df['close'] - lo) - (hi - df['close'])) / (hi - lo) * df['volume']
-
-    return mfv.rolling(window=length, min_periods=length).sum() / df['volume'].rolling(window=length, min_periods=length).sum()
 
 def mfi_enh(df: DataFrame, length: int) -> Series:
     max_tail = 1.05
