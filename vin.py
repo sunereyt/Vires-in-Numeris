@@ -27,7 +27,7 @@ class ViN(IStrategy):
     process_only_new_candles = True
     use_sell_signal = True
     sell_profit_only = False
-    startup_candle_count: int = sideways_candles
+    startup_candle_count: int = 72
 
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         return df
@@ -49,19 +49,24 @@ class ViN(IStrategy):
         df['lc2_adj'] = (lo_adj + df['close']) / 2
 
         df_closechange = df['close'] - df['close'].shift(1)
-        for i in (1, 2, 3):
+        s = (1, 2, 3)
+        for i in s:
             df['updown'] = np.where(df_closechange.rolling(window=i, min_periods=1).sum().gt(0), 1, np.where(df_closechange.rolling(window=i, min_periods=1).sum().lt(0), -1, 0))
             df[f"streak_{i}"] = df['updown'].groupby((df['updown'].ne(df['updown'].shift(1))).cumsum()).cumsum()
-        df['streak_min'] = df[['streak_1', 'streak_2', 'streak_3']].min(axis=1)
-        df['streak_min_change'] = df['close'] / df['close'].to_numpy()[df.index.to_numpy() + np.where(df['streak_min'].lt(0), df['streak_min'].to_numpy(), 0)]
-        df['streak_max'] = df[['streak_1', 'streak_2', 'streak_3']].max(axis=1)
-        df['streak_max_change'] = df['close'] / df['close'].to_numpy()[df.index.to_numpy() - np.where(df['streak_max'].gt(0), df['streak_max'].to_numpy(), 0)]
-        df.drop(columns=['updown', 'streak_1', 'streak_2', 'streak_3'], inplace=True)
+        df['streak_s_min'] = df[[f"streak_{i}" for i in s]].min(axis=1)
+        df['streak_s_min_change'] = df['close'] / df['close'].to_numpy()[df.index.to_numpy() + np.where(df['streak_s_min'].lt(0), df['streak_s_min'].to_numpy(), 0)]
+        df['streak_s_max'] = df[[f"streak_{i}" for i in s]].max(axis=1)
+        df['streak_s_max_change'] = df['close'] / df['close'].to_numpy()[df.index.to_numpy() - np.where(df['streak_s_max'].gt(0), df['streak_s_max'].to_numpy(), 0)]
+        df.drop(columns=[f"streak_{i}" for i in s], inplace=True)
+        i = 16
+        df['updown'] = np.where(df_closechange.rolling(window=i, min_periods=1).sum().gt(0), 1, np.where(df_closechange.rolling(window=i, min_periods=1).sum().lt(0), -1, 0))
+        df[f"streak_b"] = df['updown'].groupby((df['updown'].ne(df['updown'].shift(1))).cumsum()).cumsum()
+        df.drop(columns=['updown'], inplace=True)
 
         df[f"candle_count_{self.startup_candle_count}"] = df['volume'].rolling(window=self.startup_candle_count, min_periods=self.startup_candle_count).count()
 
-        df = self.populate_indicators_sell(df, metadata)
         df = self.populate_indicators_buy(df, metadata)
+        df = self.populate_indicators_sell(df, metadata)
         return df
 
     def fill_custom_info(self, df: DataFrame, metadata: dict):
@@ -79,7 +84,7 @@ class ViN(IStrategy):
 
     def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
         df.loc[:, 'buy'] = False
-        # self.fill_custom_info(df, metadata)
+        self.fill_custom_info(df, metadata)
         return df
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -98,6 +103,7 @@ class ViN(IStrategy):
         # df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         # candle_1: Series = df.iloc[-1]
         # buy_candle_date = candle_1['date']
+        # log.info(f"confirm_trade_entry: Buy for pair {pair} with on candle {buy_candle_date} with close_corr {candle_1['close_corr_99']}")
         # try:
         #     buy_tags = self.custom_buy_info[buy_candle_date][pair]
         #     pairs = len(self.dp.current_whitelist())
@@ -106,7 +112,7 @@ class ViN(IStrategy):
         #         buy_info = self.custom_buy_info[buy_candle_date]
         #         buy_signal_count = buy_info['buy_signals']
         #         if buy_signal_count > max_concurrent_buy_signals:
-        #             log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
+                    # log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
         #             return False
         # except:
         #     log.warning(f"confirm_trade_entry: No buy info for pair {pair} on candle {buy_candle_date}.")
@@ -120,15 +126,15 @@ def vwrs(df: DataFrame, length: int) -> Series:
 
 
 class ViNBuyPct(ViN):
-    lookback_range = range(11, 34)
+    lookback_range = range(12, 33)
 
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         ef = df['close'].reset_index()
         for i in self.lookback_range:
             j = i * 2
-            pctchange = df['close'].pct_change(periods=i)
-            pctchange_mean = pctchange.rolling(window=i, min_periods=i).mean()
-            pctchange_std = pctchange.rolling(window=i, min_periods=i).std()
+            df[f"pctchange_{i}"] = df['close'].pct_change(periods=i)
+            pctchange_mean = df[f"pctchange_{i}"].rolling(window=i, min_periods=i).mean()
+            pctchange_std = df[f"pctchange_{i}"].rolling(window=i, min_periods=i).std()
             df[f"bb_pctchange_{i}_up"] = pctchange_mean + 2 * pctchange_std
             df[f"bb_pctchange_{i}_lo"] = pctchange_mean - 2 * pctchange_std
             df[f"vwrs_{i}"] = vwrs(df, length=i)
@@ -145,20 +151,21 @@ class ViNBuyPct(ViN):
             buy_conditions = [
                 df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
                 df['volume'].ge(self.min_candle_vol),
-                # df['streak_min'].le(-1),
-                ~df['green'],
-                df['streak_min_change'].le(0.99),
-                (df['close'].pct_change(periods=i) / df[f"bb_pctchange_{i}_lo"]).between(1.01, 1.49),
+                df['streak_s_min'].le(-1),
+                df['streak_s_min_change'].le(0.98),
+                df['streak_s_min'].ge(df['streak_b']),
+                (df[f"pctchange_{i}"] / df[f"bb_pctchange_{i}_lo"]).between(1.01, 1.20),
                 (df[f"bb_pctchange_{i}_up"] - df[f"bb_pctchange_{i}_lo"]).ge(0.03),
-                (df['lc2_adj'] / df['close']).le(0.992),
+                (df['lc2_adj'] / df['close']).le(0.994),
                 df[f"vwrs_{i}"].le(i + 4),
+                df[f"close_corr_{j}"].gt(-0.80),
                 df[f"close_corr_{j}"].gt(df[f"close_corr_{i}"])
             ]
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
 
         df.loc[:, 'buy'] = df['buy_tag'].ne('') & df['buy_tag'].str.len().lt(42)
-        df.loc[:, 'buy_tag'] = (df['buy_tag'].str.len() // 3).where(df['buy_tag'].ne(''), '')
+        df.loc[:, 'buy_tag'] = df['buy_tag'].str.strip() #(df['buy_tag'].str.len() // 3).where(df['buy_tag'].ne(''), '')
 
         # self.fill_custom_info(df, metadata)
         return df
@@ -176,17 +183,21 @@ class ViNSellCorr(ViN):
         if trade_len <= 1 or (trade_len < self.sideways_candles and -0.015 < current_profit < 0.015):
             return None
         buy_tag = trade.buy_tag
-        i = min(trade_len, self.sideways_candles)
-        ef = df.reset_index()
+        # do not sell if price is more above lowest price compared with below highest price
+        i = min(trade_len, self.sideways_candles) # maybe change to i = trade_len
+        j = i // 2
+        ef = df.reset_index() # maybe change to df_trade, and use only two columns?
         ef['vwrs_sell'] = vwrs(ef, length=i)
         ef['vwrs_corr'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['vwrs_sell'], method='spearman')
-        ef['close_corr'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
+        ef['close_corr_i'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
+        ef['close_corr_j'] = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman')
         vwrs_corr_diff = ef['vwrs_corr'].iat[-1] - ef['vwrs_corr'].iat[-2]
-        close_corr_diff = ef['close_corr'].iat[-1] - ef['close_corr'].iat[-2]
-        offset = 0.04 + (current_profit / 18 - i / (self.sideways_candles * 18))
-        if vwrs_corr_diff < -offset and close_corr_diff > offset and abs(vwrs_corr_diff) > abs(close_corr_diff):
-            log.info(f"custom_sell: corr sell for pair {pair} with profit/loss {current_profit:.2n}, offset {offset:.3n} and trade len {trade_len} on candle {candle_1['date']}.")
-            return f"corr sell ({buy_tag})"
+        close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
+        close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
+        offset = 0.04 + (current_profit / 18 - i / (self.sideways_candles * 18)) # maybe different for loss/win
+        if vwrs_corr_diff < -offset and close_corr_i_diff > offset and close_corr_ij_diff > 0: # why does > offset not work? also try > 0.x
+            log.info(f"custom_sell: corr sell for pair {pair} with profit/loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+            return f"corr sell {buy_tag} ({len(buy_tag) // 3 + 1})"
         else:
             return None
 
@@ -207,27 +218,27 @@ class ViNSellStreaks(ViN):
         sell_conditions = [
             df['volume'].ge(self.min_candle_vol * 1.4),
             df['green'],
-            df['streak_max'].ge(3)
+            df['streak_s_max'].ge(3)
         ]
         sell = reduce(lambda x, y: x & y, sell_conditions)
-        df.loc[sell, 'sell_tag'] = 'pct+' + df['streak_max'].astype(str)
+        df.loc[sell, 'sell_tag'] = 'pct+' + df['streak_s_max'].astype(str)
 
         time_periods = range(3, self.lookback_candles + 1)
         for i in time_periods:
             sell_conditions = [
                 df['volume'].ge(self.min_candle_vol * 1.4),
                 df[f"volume_{i}"].ge(self.min_candle_vol * i * 0.8),
-                df['streak_max'].ne(df['streak_min']),
+                df['streak_s_max'].ne(df['streak_min']),
                 df['streak_min'].ne(-1),
                 df[f"close_corr_{i}"].between(0.75, 0.95),
                 df[f"close_corr_{i-1}"].lt(df[f"close_corr_{i}"])
             ]
             if i == max(time_periods):
-                sell_conditions.append(df['streak_max'].ge(i))
+                sell_conditions.append(df['streak_s_max'].ge(i))
             else:
-                sell_conditions.append(df['streak_max'].eq(i))
+                sell_conditions.append(df['streak_s_max'].eq(i))
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = 'corr+' + df['streak_max'].astype(str)
+            df.loc[sell, 'sell_tag'] = 'corr+' + df['streak_s_max'].astype(str)
 
         for i in time_periods:
             sell_conditions = [
@@ -238,11 +249,11 @@ class ViNSellStreaks(ViN):
                 df['uppertail'].ge(1.02)
             ]
             if i == max(time_periods):
-                sell_conditions.append(df['streak_max'].ge(i))
+                sell_conditions.append(df['streak_s_max'].ge(i))
             else:
-                sell_conditions.append(df['streak_max'].eq(i))
+                sell_conditions.append(df['streak_s_max'].eq(i))
             sell = reduce(lambda x, y: x & y, sell_conditions)
-            df.loc[sell, 'sell_tag'] = 'tail+' + df['streak_max'].astype(str)
+            df.loc[sell, 'sell_tag'] = 'tail+' + df['streak_s_max'].astype(str)
 
         for i in time_periods:
             sell_conditions = [
