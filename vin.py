@@ -141,7 +141,6 @@ class ViNBuyPct(ViN):
             df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
             df[f"close_corr_{j}"] = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman')
             df = df.copy()
-
         return df
 
     def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -163,10 +162,8 @@ class ViNBuyPct(ViN):
             ]
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
-
         df.loc[:, 'buy'] = df['buy_tag'].ne('') & df['buy_tag'].str.len().lt(42)
         df.loc[:, 'buy_tag'] = df['buy_tag'].str.strip() #(df['buy_tag'].str.len() // 3).where(df['buy_tag'].ne(''), '')
-
         # self.fill_custom_info(df, metadata)
         return df
 
@@ -180,23 +177,48 @@ class ViNSellCorr(ViN):
         trade_len = len(df_trade)
         candle_1: Series = df_trade.iloc[-1]
         current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
-        if trade_len <= 1 or (trade_len < self.sideways_candles and -0.015 < current_profit < 0.015):
-            return None
         buy_tag = trade.buy_tag
+        if trade_len <= 2:
+            if current_profit < -0.18:
+                log.info(f"custom_sell: immediate stoploss for pair {pair} with loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+                return f"immediate stoploss {buy_tag} ({len(buy_tag) // 3 + 1})"
+            else:
+                return None
+        if trade_len < self.sideways_candles and -0.015 < current_profit < 0.015:
+            return None
         # do not sell if price is more above lowest price compared with below highest price
-        i = min(trade_len, self.sideways_candles) # maybe change to i = trade_len
+        i = trade_len
         j = i // 2
-        ef = df.reset_index() # maybe change to df_trade, and use only two columns?
-        ef['vwrs_sell'] = vwrs(ef, length=i)
-        ef['vwrs_corr'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['vwrs_sell'], method='spearman')
-        ef['close_corr_i'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
-        ef['close_corr_j'] = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman')
-        vwrs_corr_diff = ef['vwrs_corr'].iat[-1] - ef['vwrs_corr'].iat[-2]
-        close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
-        close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
-        offset = 0.04 + (current_profit / 18 - i / (self.sideways_candles * 18)) # maybe different for loss/win
-        if vwrs_corr_diff < -offset and close_corr_i_diff > offset and close_corr_ij_diff > 0: # why does > offset not work? also try > 0.x
-            log.info(f"custom_sell: corr sell for pair {pair} with profit/loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+        ef = df_trade[['close', 'hlc3_adj', 'volume']].reset_index()
+        vwrs_sell = vwrs(ef, length=i).iat[-1]
+        vwrs_sell_p = vwrs(ef, length=i-1).iat[-2]
+        close_corr_i = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman').iat[-1]
+        close_corr_i_p = ef['index'].rolling(window=i-1, min_periods=i-1).corr(ef['close'], method='spearman').iat[-2]
+        close_corr_j = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman').iat[-1]
+        close_corr_ij_diff = close_corr_i - close_corr_j
+        close_offset = 0.06 - current_profit / 80 + i / 8000
+        vwrs_offset = 100 - i / 10
+        # close_change = ef['close'].iat[-1] / ef['close'].iat[-2]
+        # if i == 48: # current_profit > 2.9:
+            # print(f"pair: {pair} i: {i} vwrs: {vwrs_sell} vwrs prev: {vwrs_sell_p} profit: {current_profit} cc_i: {close_corr_i} cc_j: {close_corr_j} close_corr: {close_corr_ij_diff}")
+# pair: BTCST/USDT i: 48 vwrs: 87.39963613666005 vwrs prev: 80.59229611672298 profit: 0.7785269709543567 cc_i: 0.8247342416653087 cc_j: 0.7820012921245723 close_corr: 0.042732949540736476
+# pair: BTCST/USDT i: 296 vwrs: 70.6825062612173 vwrs prev: 68.25388902037324 profit: 3.3838174273858916 cc_i: 0.8131438028747624 cc_j: 0.7590573325077318 close_corr: 0.054086470367030626
+# pair: BTCST/USDT i: 297 vwrs: 66.8376860617758 vwrs prev: 70.6825062612173 profit: 3.071576763485477 cc_i: 0.8003955956679617 cc_j: 0.7428646204322812 close_corr: 0.057530975235680515
+# pair: BTCST/USDT i: 402 vwrs: 58.87263579365934 vwrs prev: 57.96015607190177 profit: 2.9683609958506225 cc_i: 0.9096999490172314 cc_j: 0.894806587637213 close_corr: 0.0148933613800184
+# pair: BTCST/USDT i: 404 vwrs: 57.33083386314991 vwrs prev: 57.971860532739896 profit: 2.91753112033195 cc_i: 0.9110616191765116 cc_j: 0.8959639132515144 close_corr: 0.015097705924997262
+# pair: BTCST/USDT i: 405 vwrs: 57.63673827222537 vwrs prev: 57.33083386314991 profit: 2.946058091286307 cc_i: 0.9117132094273102 cc_j: 0.8961977837248652 close_corr: 0.015515425702444907
+# pair: BTCST/USDT i: 406 vwrs: 58.44885825165831 vwrs prev: 57.63673827222537 profit: 3.2022821576763483 cc_i: 0.9121376088880336 cc_j: 0.8978056188066058 close_corr: 0.014331990081427826
+# pair: BTCST/USDT i: 407 vwrs: 57.77085886980963 vwrs prev: 58.44885825165831 profit: 3.109958506224066 cc_i: 0.9126771987138557 cc_j: 0.8982248159832055 close_corr: 0.014452382730650193
+# pair: BTCST/USDT i: 408 vwrs: 57.29654131511428 vwrs prev: 57.77085886980963 profit: 2.978215767634855 cc_i: 0.9133129054751903 cc_j: 0.8994507195198589 close_corr: 0.013862185955331396
+# pair: BTCST/USDT i: 409 vwrs: 56.92294208695377 vwrs prev: 57.29654131511428 profit: 2.941908713692946 cc_i: 0.9139604050646777 cc_j: 0.8995072192676636 close_corr: 0.014453185797014045
+# pair: BTCST/USDT i: 423 vwrs: 57.12074645671926 vwrs prev: 56.89872465357725 profit: 2.930497925311203 cc_i: 0.9219235363866242 cc_j: 0.8911315350311495 close_corr: 0.030792001355474663
+# pair: BTCST/USDT i: 425 vwrs: 57.11104848488262 vwrs prev: 56.96286623697871 profit: 2.9403526970954355 cc_i: 0.9230589766688897 cc_j: 0.8910238645028629 close_corr: 0.032035112166026836
+# pair: BTCST/USDT i: 437 vwrs: 57.061423786491794 vwrs prev: 56.97841214040318 profit: 2.937759336099585 cc_i: 0.9291281711372972 cc_j: 0.885345915754932 close_corr: 0.04378225538236513
+        if current_profit < -0.08 + i / 800 and vwrs_sell > 18 and close_corr_i < -0.8 - current_profit * 4 + i / 800 and close_corr_j < -0.4 - current_profit * 4 + i / 800:
+            log.info(f"custom_sell: corr stop for pair {pair} with loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+            return f"corr stop {buy_tag} ({len(buy_tag) // 3 + 1})"
+        if current_profit > 0.015 and vwrs_sell > vwrs_sell_p and vwrs_sell > vwrs_offset and close_corr_i < close_corr_i_p and close_corr_i < 0.9 and close_corr_j < 0.8 and -close_offset < close_corr_ij_diff < close_offset:
+            log.info(f"custom_sell: corr sell for pair {pair} with profit {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
             return f"corr sell {buy_tag} ({len(buy_tag) // 3 + 1})"
         else:
             return None
@@ -210,7 +232,6 @@ class ViNSellStreaks(ViN):
         for i in self.sell_indicator_range:
             df[f"volume_{i}"] = df['volume'].rolling(window=i, min_periods=i).sum()
             df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
-
         return df.copy()
 
     def populate_sell_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
