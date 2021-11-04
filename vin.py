@@ -95,6 +95,7 @@ class ViNBuyPct(ViN):
         for i in self.lookback_range:
             j = i * 2
             df[f"pctchange_{i}"] = df['close'].pct_change(periods=i)
+            # df[f"pctchange_{i}"] = (df['close'] - df['close'].shift(1)).rolling(window=i, min_periods=i).sum()
             pctchange_mean = df[f"pctchange_{i}"].rolling(window=i, min_periods=i).mean()
             pctchange_std = df[f"pctchange_{i}"].rolling(window=i, min_periods=i).std()
             df[f"bb_pctchange_{i}_up"] = pctchange_mean + 2 * pctchange_std
@@ -111,7 +112,7 @@ class ViNBuyPct(ViN):
             j = i * 2
             buy_conditions = [
                 df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
-                df['volume'].ge(self.min_candle_vol),
+                df['volume'].ge(self.min_candle_vol * 2),
                 df['streak_s_min'].le(-1),
                 df['streak_s_min_change'].le(0.98),
                 df['streak_s_min'].ge(df['streak_b']),
@@ -140,13 +141,20 @@ class ViNSellCorrV1(ViN):
         trade_len = len(df_trade) - 1
         candle_1: Series = df_trade.iloc[-1]
         current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
-        if trade_len <= 1 or (trade_len < self.sideways_candles and -0.015 < current_profit < 0.015):
-            return None
         buy_tag = trade.buy_tag
+        if trade_len <= 2:
+            if current_profit < -0.08:
+                log.info(f"custom_sell: immediate stoploss for pair {pair} with loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+                return f"immediate stoploss {buy_tag} ({len(buy_tag) // 3 + 1})"
+            else:
+                return None
+        if trade_len < self.sideways_candles and -0.015 < current_profit < 0.015:
+            return None
         # do not sell if price is more above lowest price compared with below highest price
         i = min(trade_len, self.sideways_candles) # maybe change to i = trade_len
         j = i // 2
-        ef = df.reset_index() # maybe change to df_trade, and use only two columns?
+        ef = df_trade[['close', 'hlc3_adj', 'volume']].reset_index()
+        # ef = df.reset_index() # maybe change to df_trade, and use only two columns?
         ef['vwrs_sell'] = vwrs(ef, length=i)
         ef['vwrs_corr'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['vwrs_sell'], method='spearman')
         ef['close_corr_i'] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
@@ -154,7 +162,7 @@ class ViNSellCorrV1(ViN):
         vwrs_corr_diff = ef['vwrs_corr'].iat[-1] - ef['vwrs_corr'].iat[-2]
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
-        if current_profit < -0.08:
+        if current_profit <= -0.04:
             offset = 0.04 + (current_profit / 8 - i / (self.sideways_candles * 8))
         else:
             offset = 0.04 + (current_profit / 18 - i / (self.sideways_candles * 18))
@@ -189,11 +197,11 @@ class ViNSellCorr(ViN):
         vwrs_sell = vwrs(ef, length=i)
         close_corr_i = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
         close_corr_j = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman')
-        if current_profit <= min(0.015, -0.08 + i / 400) and vwrs_sell.iat[-1] > max(18, 54 - i / 4) and candle_1['streak_s_max'] <= -1:
+        if current_profit <= min(-0.015, -0.08 + i / 400) and vwrs_sell.iat[-1] > max(18, 54 - i / 4) and candle_1['streak_s_max'] <= -1:
             log.info(f"custom_sell: corr stop for pair {pair} with loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
             return f"corr stop {buy_tag} ({len(buy_tag) // 3 + 1})"
-        if current_profit >= 0.015 and vwrs_sell.iat[-1] > 100 - i / 8 and close_corr_i.iat[-1] < 0.9 and close_corr_i.iat[-1] > close_corr_i.iat[-2] and close_corr_j.iat[-1] < close_corr_i.iat[-1]:
-            log.info(f"custom_sell: corr sell for pair {pair} with profit {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
+        if current_profit >= -0.015 and vwrs_sell.iat[-1] > 100 - i / 8 and close_corr_i.iat[-1] < 0.9 and close_corr_i.iat[-1] > close_corr_i.iat[-2] and close_corr_j.iat[-1] < close_corr_i.iat[-1]:
+            log.info(f"custom_sell: corr sell for pair {pair} with profit/loss {current_profit:.2n} and trade len {trade_len} on candle {candle_1['date']}.")
             return f"corr sell {buy_tag} ({len(buy_tag) // 3 + 1})"
         else:
             return None
