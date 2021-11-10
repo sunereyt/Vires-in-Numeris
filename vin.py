@@ -17,7 +17,7 @@ class ViN(IStrategy):
     min_candle_vol: int = 0
     custom_buy_info = {}
     stoploss_count: int = 0
-    sideways_candles: int = 36
+    sideways_candles: int = 80
 
     minimal_roi = {"0": 100}
     stoploss = -0.99
@@ -99,7 +99,7 @@ class ViNBuyPct(ViN):
             pctchange_std = df[f"pctchange_{i}"].rolling(window=i, min_periods=i).std()
             df[f"bb_pctchange_{i}_up"] = pctchange_mean + 2 * pctchange_std
             df[f"bb_pctchange_{i}_lo"] = pctchange_mean - 2 * pctchange_std
-            df[f"vwrs_{i}"] = vwrs(df, length=i)
+            # df[f"vwrs_{i}"] = vwrs(df, length=i)
             df[f"close_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['close'], method='spearman')
             df[f"close_corr_{j}"] = ef['index'].rolling(window=j, min_periods=j).corr(ef['close'], method='spearman')
             df = df.copy()
@@ -111,22 +111,23 @@ class ViNBuyPct(ViN):
             j = i * 2
             buy_conditions = [
                 df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
-                df['volume'].ge(self.min_candle_vol * 2),
+                df['volume'].ge(self.min_candle_vol),
                 df['streak_s_min'].le(-1),
                 df['streak_s_min_change'].le(0.98),
                 df['streak_s_min'].ge(df['streak_b']),
                 (df[f"pctchange_{i}"] / df[f"bb_pctchange_{i}_lo"]).between(1.01, 1.20),
                 (df[f"bb_pctchange_{i}_up"] - df[f"bb_pctchange_{i}_lo"]).ge(0.03),
-                (df['lc2_adj'] / df['close']).le(0.996),
-                df[f"vwrs_{i}"].le(i + 4),
+                (df['lc2_adj'] / df['close']).le(0.994),
+                # df[f"vwrs_{i}"].le(24), # + sqrt(i)), #le(i + 4),
                 df[f"close_corr_{j}"].gt(-0.80),
                 df[f"close_corr_{j}"].gt(df[f"close_corr_{i}"])
             ]
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
         df.loc[:, 'buy_signals'] = df['buy_tag'].str.len() // 3
-        n = [1, 2, 3, 4, 12, 13]
-        df.loc[:, 'buy'] = df['buy_tag'].ne('') & df['buy_signals'].between(2, 13) #isin(n)  # df['buy_tag'].str.len().between(6, 12)
+        n = [2, 3, 4, 12, 13]
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') & df['buy_signals'].between(2, 10 + 4 * df[f"close_corr_{j}"].abs())
+        # df.loc[:, 'buy'] = df['buy_tag'].ne('') & df['buy_signals'].between(2, 10)
         df.loc[:, 'buy_tag'] = df['buy_tag'].str.strip()
         return df
 
@@ -142,20 +143,20 @@ class ViNSellCorrV1(ViN):
         close = ef['close'].iat[-1]
         current_profit = (close - trade.open_rate) / trade.open_rate
         buy_tag = trade.buy_tag
-        buy_signals = df_trade['buy_signals'].iat[-1]
+        buy_signals = (len(buy_tag) + 1) // 3
         hc2_max = df_trade['hc2_adj'].max()
         lc2_min = df_trade['lc2_adj'].min()
         if trade_len <= 2:
-            if current_profit < -0.08 and not df_trade['green'].iat[-1]:
+            if current_profit < -0.12 and not df_trade['green'].iat[-1]:
                 log.info(f"custom_sell: immediate sell for pair {pair} with loss {current_profit:.2f} and trade len {trade_len} on candle {df_trade['date'].iat[-1]}.")
-                return f"immediate sell {buy_tag} ({buy_signals})"
+                return f"immediate sell ({buy_signals})"
             else:
                 return None
         if trade_len < self.sideways_candles and -0.015 < current_profit < 0.015:
             return None
-        if current_profit < -0.12 and df_trade['streak_s_max'].iat[-1] < 1:
+        if current_profit < -0.16 and df_trade['streak_s_max'].iat[-1] < 1:
                 log.info(f"custom_sell: stoploss for pair {pair} with loss {current_profit:.2f} and trade len {trade_len} on candle {df_trade['date'].iat[-1]}.")
-                return f"stoploss {buy_tag} ({buy_signals})"
+                return f"stoploss ({buy_signals})"
         # if current_profit < -0.08 and df_trade['streak_s_max'].iat[-1] < 1 and hc2_max / trade.open_rate < 1.015:
         #         log.info(f"custom_sell: never profit for pair {pair} with loss {current_profit:.2f} and trade len {trade_len} on candle {df_trade['date'].iat[-1]}.")
         #         return f"never profit {buy_tag} ({len(buy_tag) // 3 + 1})"
@@ -171,13 +172,13 @@ class ViNSellCorrV1(ViN):
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
         # print(f"i: {i}, trade len: {trade_len}, vwrs-1 {ef['vwrs_corr'].iat[-1]}, vwrs-2 {ef['vwrs_corr'].iat[-2]}, vwrs_corr_diff: {vwrs_corr_diff}, close_corr_i_diff: {close_corr_i_diff}")
-        if current_profit < -0.015:
+        if current_profit < -0.08:
             offset = pow(current_profit * 100, 3) / 3600 - i / 720
         else:
             offset = (sqrt(abs(current_profit * 100)) - i) / 3600
         if vwrs_corr_diff < -offset and close_corr_i_diff > offset and close_corr_ij_diff > -offset:
             log.info(f"custom_sell: corr sell for pair {pair} with profit/loss {current_profit:.2f} and trade len {trade_len} on candle {df_trade['date'].iat[-1]}.")
-            return f"corr sell {buy_tag} ({buy_signals})"
+            return f"corr sell ({buy_signals})"
         else:
             return None
 
