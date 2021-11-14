@@ -61,7 +61,7 @@ class ViN(IStrategy):
         df = self.populate_indicators_buy(df, metadata)
         df = self.populate_indicators_sell(df, metadata)
         if self.config['runmode'].value not in ('live', 'dry_run') and self.write_to_csv:
-            ef = df[['date', 'open', 'high', 'low', 'close', 'volume']].reset_index()
+            ef = df[['date', 'open', 'high', 'low', 'close', 'volume', 'bodysize', 'hlc3_adj', 'lc2_adj', 'hc2_adj', 'streak_s_min', 'streak_s_max']]
             ef['pair'] = metadata['pair']
             with open(self.df_csv, 'a') as f:
                 ef.to_csv(f, sep=';', header=f.tell()==0, index=False)
@@ -196,7 +196,6 @@ class ViNBuyPct(ViN):
         n = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         df.loc[:, 'buy'] = df['buy_tag'].str.contains('25|26|27|28|29|30|31|32') | df['buy_signals'].isin(n)
         df.loc[:, 'buy_tag'] = df['buy_tag'].str.strip()
-
         self.fill_custom_buy_info(df, metadata)
         return df
 
@@ -224,7 +223,7 @@ class ViNSellCorrV1(ViN):
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
         if current_profit < -0.08:
-            offset = 0.4 + pow(current_profit * 100, 3) / 1000
+            offset = 0.4 + pow(current_profit * 18, 3) / 1000
             streak_s_max_lt = 1
             streak_s_min_lt = 0
             t = 'big loss'
@@ -246,9 +245,6 @@ class ViNSellCorrV1(ViN):
             return f"vwrs sell {t} ({buy_signals})"
         else:
             return None
-
-class ViNBuyPctSellCorrV1(ViNBuyPct, ViNSellCorrV1):
-    pass
 
 class ViresInNumeris(ViNBuyPct, ViNSellCorrV1):
     pass
