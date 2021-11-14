@@ -24,7 +24,7 @@ class ViN(IStrategy):
     max_concurrent_buy_signals_check = False
 
     minimal_roi = {"0": 100}
-    stoploss = -0.99
+    stoploss = -1
     stoploss_on_exchange = False
     trailing_stop = False
     use_custom_stoploss = False
@@ -222,7 +222,7 @@ class ViNSellCorrV1(ViN):
         vwrs_corr_diff = ef['vwrs_corr'].iat[-1] - ef['vwrs_corr'].iat[-2]
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
-        if current_profit < -0.08:
+        if current_profit < -0.06:
             offset = 0.4 + pow(current_profit * 100, 3) / 1000
             streak_s_max_lt = 1
             streak_s_min_lt = 0
