@@ -222,7 +222,7 @@ class ViNSellCorrV1(ViN):
         vwrs_corr_diff = ef['vwrs_corr'].iat[-1] - ef['vwrs_corr'].iat[-2]
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
-        if current_profit < -0.06:
+        if current_profit < -0.08:
             offset = 0.4 + pow(current_profit * 100, 3) / 1000
             streak_s_max_lt = 1
             streak_s_min_lt = 0
