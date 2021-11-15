@@ -21,7 +21,7 @@ class ViN(IStrategy):
     f_trades = './user_data/vintrades.txt'
     min_candle_vol: int = 0
     custom_buy_info = {}
-    max_concurrent_buy_signals_check = False
+    max_concurrent_buy_signals_check = True
 
     minimal_roi = {"0": 100}
     stoploss = -1
@@ -43,8 +43,8 @@ class ViN(IStrategy):
     def populate_indicators(self, df: DataFrame, metadata: dict) -> DataFrame:
         df['green'] = (df['close'] - df['open']).ge(0)
         df['bodysize'] = (df['close'] / df['open']).where(df['green'], df['open'] / df['close'])
-        hi_adj = df['close'].where(df['green'], df['open']) + (df['high'] - df['close']).where(df['green'], (df['high'] - df['open'])) / df['bodysize']
-        lo_adj = df['open'].where(df['green'], df['close']) - (df['open'] - df['low']).where(df['green'], (df['close'] - df['low'])) / df['bodysize']
+        hi_adj = df['close'].where(df['green'], df['open']) + (df['high'] - df['close']).where(df['green'], (df['high'] - df['open'])) / df['bodysize'].pow(0.25)
+        lo_adj = df['open'].where(df['green'], df['close']) - (df['open'] - df['low']).where(df['green'], (df['close'] - df['low'])) / df['bodysize'].pow(0.25)
         df['hlc3_adj'] = (hi_adj + lo_adj + df['close']) / 3
         df['lc2_adj'] = (lo_adj + df['close']) / 2
         df['hc2_adj'] = (hi_adj + df['close']) / 2
@@ -110,7 +110,7 @@ class ViN(IStrategy):
             buy_signal_count = buy_info['buy_signals']
             if self.max_concurrent_buy_signals_check:
                 pairs = len(self.dp.current_whitelist())
-                max_concurrent_buy_signals = max(int(pairs * 0.08), 10)
+                max_concurrent_buy_signals = max(int(pairs * 0.4), 8)
                 if buy_signal_count > max_concurrent_buy_signals:
                     log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
                     return False
