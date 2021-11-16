@@ -6,4 +6,6 @@ Work in progress, you will loose money.
 
 Use ViresInNumeris as the strategy name.
 
-More slots is more wins and more losses.
+Use at least 18 slots.
+
+More slots is more wins and more losses:)
