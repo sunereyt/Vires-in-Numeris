@@ -11,6 +11,12 @@ import locale
 locale.setlocale(category=locale.LC_ALL, locale='')
 log = logging.getLogger(__name__)
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+
+from NostalgiaForInfinityX import NostalgiaForInfinityX
+
 class ViN(IStrategy):
     INTERFACE_VERSION = 2
 
@@ -110,11 +116,11 @@ class ViN(IStrategy):
             buy_signal_count = buy_info['buy_signals']
             if self.max_concurrent_buy_signals_check:
                 pairs = len(self.dp.current_whitelist())
-                max_concurrent_buy_signals = max(int(pairs * 0.4), 8)
+                max_concurrent_buy_signals = max(int(pairs * 0.18), 18)
                 if buy_signal_count > max_concurrent_buy_signals:
                     log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} is cancelled. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
                     return False
-            log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date}.")
+            log.info(f"confirm_trade_entry: Buy for pair {pair} with buy tag {buy_tags} on candle {buy_candle_date} ({buy_signal_count} concurrent buy signals).")
             if self.config['runmode'].value not in ('live', 'dry_run') and self.write_to_txt:
                 close_1_price = candle_1['close']
                 indicator = []
@@ -209,9 +215,14 @@ class ViNSellCorrV1(ViN):
         trade_len = len(df_trade) - 1
         candle_1 = df_trade.iloc[-1]
         current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
-        if trade_len <= 2 or candle_1['buy'] or candle_1['streak_b'] >= candle_1['streak_s_min'] or (trade_len < self.startup_candle_count and -0.04 < current_profit < 0.04):
+        if trade_len <= 2 or candle_1['buy'] or candle_1['streak_b'] >= candle_1['streak_s_min'] or (trade_len < self.startup_candle_count and -0.08 < current_profit < 0.04):
             return None
         buy_signals = (len(trade.buy_tag) + 1) // 3
+        streak_s_max_lt = 1
+        streak_s_min_lt = 0
+        if current_profit < -0.18 and candle_1['streak_s_max'] < streak_s_max_lt and candle_1['streak_s_min'] < streak_s_min_lt:
+            log.info(f"custom_sell: stop for pair {pair} with loss {current_profit:.2f} and trade len {trade_len} on candle {candle_1['date']}.")
+            return f"stop loss ({buy_signals})"
         i = min(trade_len, self.startup_candle_count)
         j = i // 2
         ef = df_trade[['close', 'hlc3_adj', 'volume']].reset_index()
@@ -223,9 +234,7 @@ class ViNSellCorrV1(ViN):
         close_corr_i_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_i'].iat[-2]
         close_corr_ij_diff = ef['close_corr_i'].iat[-1] - ef['close_corr_j'].iat[-1]
         if current_profit < -0.08:
-            offset = 0.4 + pow(current_profit * 100, 3) / 1000
-            streak_s_max_lt = 1
-            streak_s_min_lt = 0
+            offset = 0.4 - pow(current_profit * 100, 4) / 1000
             t = 'big loss'
         elif current_profit < 0:
             offset = 0.6 - pow(current_profit * 100, 2) / 1000 - trade_len * 0.018
@@ -237,14 +246,17 @@ class ViNSellCorrV1(ViN):
             streak_s_max_lt = 36
             streak_s_min_lt = 18
             t = 'profit'
-        if ef['vwrs_sell'].iat[-1] > 18 and close_corr_i_diff > offset and close_corr_ij_diff > 0 and candle_1['streak_s_max'] < streak_s_max_lt and candle_1['streak_s_min'] < streak_s_min_lt:
+        if ef['vwrs_sell'].iat[-1] > 18 and close_corr_i_diff > offset and close_corr_ij_diff > 0.1 and candle_1['streak_s_max'] < streak_s_max_lt and candle_1['streak_s_min'] < streak_s_min_lt:
             log.info(f"custom_sell: corr sell for pair {pair} with {t} {current_profit:.2f} and trade len {trade_len} on candle {candle_1['date']}.")
             return f"corr sell {t} ({buy_signals})"
-        elif ef['vwrs_sell'].iat[-1] > 96 + abs(current_profit) * 18 - max(54, trade_len * 0.18) and vwrs_corr_diff < 0 and candle_1['hc2_adj'] / candle_1['close'] >= 1.006:
+        elif ef['vwrs_sell'].iat[-1] > 96 + abs(current_profit) * 18 - max(54, trade_len * 0.18) and vwrs_corr_diff < -0.01 and candle_1['hc2_adj'] / candle_1['close'] >= 1.006:
             log.info(f"custom_sell: vwrs sell for pair {pair} with {t} {current_profit:.2f} and trade len {trade_len} on candle {candle_1['date']}.")
             return f"vwrs sell {t} ({buy_signals})"
         else:
             return None
 
 class ViresInNumeris(ViNBuyPct, ViNSellCorrV1):
+    pass
+
+class ViresInNostalgia(NostalgiaForInfinityX, ViNSellCorrV1):
     pass
