@@ -8,4 +8,4 @@ Use ViresInNumeris as the strategy name.
 
 Use at least 18 slots.
 
-More slots is more wins and more losses:)
+More slots is more wins and more losses.
