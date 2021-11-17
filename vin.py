@@ -11,12 +11,6 @@ import locale
 locale.setlocale(category=locale.LC_ALL, locale='')
 log = logging.getLogger(__name__)
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent))
-
-from NostalgiaForInfinityX import NostalgiaForInfinityX
-
 class ViN(IStrategy):
     INTERFACE_VERSION = 2
 
@@ -256,7 +250,4 @@ class ViNSellCorrV1(ViN):
             return None
 
 class ViresInNumeris(ViNBuyPct, ViNSellCorrV1):
-    pass
-
-class ViresInNostalgia(NostalgiaForInfinityX, ViNSellCorrV1):
     pass
