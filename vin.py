@@ -241,7 +241,7 @@ class ViNSellCorrVwrs(ViN):
             streak_s_max_lt = 36
             streak_s_min_lt = 18
             t = 'profit'
-            if candle_1['streak_s_min'] >= 1 and vwrs_corr_diff < -0.01 and candle_1['hc2_adj'] / candle_1['close'] >= 1.006:
+            if candle_1['streak_s_min'] >= 1 and vwrs_corr_diff < -0.02 and candle_1['hc2_adj'] / candle_1['close'] >= 1.006:
                 log.info(f"custom_sell: vwrs sell for pair {pair} with {t} {current_profit:.2f} and trade len {trade_len} on candle {candle_1['date']}.")
                 return f"vwrs sell {t} ({buy_signals})"
         if close_corr_i_diff > offset and close_corr_ij_diff > 0.05 and candle_1['streak_s_max'] < streak_s_max_lt and candle_1['streak_s_min'] < streak_s_min_lt:
