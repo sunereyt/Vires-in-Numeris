@@ -207,7 +207,7 @@ class ViNSellCorrVwrs(ViN):
         trade_len = len(df_trade) - 1
         candle_1 = df_trade.iloc[-1]
         current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
-        if trade_len <= 2 or candle_1['buy'] or candle_1['streak_b'] >= candle_1['streak_s_min'] or (trade_len < self.lookback_candles and -0.08 < current_profit < 0.04):
+        if trade_len <= 2 or candle_1['buy'] or candle_1['streak_b'] >= candle_1['streak_s_min'] or (trade_len < self.lookback_candles and -0.04 < current_profit < 0.04):
             return None
         buy_signals = (len(trade.buy_tag) + 1) // 3
         streak_s_max_lt = 1
