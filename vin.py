@@ -239,7 +239,7 @@ class ViNSellCorr(ViN):
                 log.info(f"{candle_1['date']:%Y-%m-%d %H:%M} custom_sell: corr sell for pair {pair} with {t} {current_profit:.2f} and trade len {trade_len}.")
                 return f"corr {t}"
         else:
-            if close_corr_ij_diff > 0.18 and abs(candle_1['streak_s_min']) > 1:
+            if close_corr_ij_diff > 0.18 + 0.5 * current_profit and abs(candle_1['streak_s_min']) > 1:
                 log.info(f"{candle_1['date']:%Y-%m-%d %H:%M} custom_sell: corr sell for pair {pair} with {t} {current_profit:.2f} and trade len {trade_len}.")
                 return f"corr {t}"
         return None
