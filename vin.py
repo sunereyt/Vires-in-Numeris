@@ -155,7 +155,7 @@ def vwrs(df: DataFrame, length: int) -> Series:
 
 
 class ViNBuyPct(ViN):
-    buy_lookback_range = range(4, 35)
+    buy_lookback_range = range(13, 33)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         for i in self.buy_lookback_range:
             df[f"pctchange_{i}"] = df['close'].pct_change(periods=i)
@@ -185,17 +185,16 @@ class ViNBuyPct(ViN):
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
             df.loc[buy, 'buy_tag_sum'] += i
-        # incl = ['13 ', '15 ', '17 ', '18 ', '20 ']
-        # excl = ['13 14 15 ', '13 14 15 16 ', '16 17 18 ', '16 17 18 19 ', '20 21 22 ', '26 27 ', '30 ']
-        # df.loc[:, 'buy'] = (df['buy_tag_sum'].ge(26) | df['buy_tag'].isin(incl)) & ~df['buy_tag'].isin(excl)
-        df.loc[:, 'buy'] = df['buy_tag_sum'].ge(1)
+        incl = ['13 ', '15 ', '17 ', '18 ', '20 ']
+        excl = ['13 14 15 ', '13 14 15 16 ', '16 17 18 ', '16 17 18 19 ', '20 21 22 ', '26 27 ', '30 ']
+        df.loc[:, 'buy'] = (df['buy_tag_sum'].ge(26) | df['buy_tag'].isin(incl)) & ~df['buy_tag'].isin(excl)
         df.loc[df['buy'], 'buy_tag'] = 'pct ' + df['buy_tag'].str.strip()
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'close', 'lc2_adj', 'volume', 'streak_s_min', 'streak_s_max', 'streak_h']])
         return df
 
 class ViNBuyEwm(ViN):
-    buy_lookback_range = range(4, 21)
+    buy_lookback_range = range(5, 7)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         ef = df[['close', 'hlc3_adj', 'volume']].reset_index()
         for i in self.buy_lookback_range:
@@ -224,7 +223,7 @@ class ViNBuyEwm(ViN):
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
             df.loc[buy, 'buy_tag_sum'] += i
-        df.loc[:, 'buy'] = df['buy_tag_sum'].ge(1)
+        df.loc[:, 'buy'] = df['buy_tag_sum'].between(5, 6)
         df.loc[df['buy'], 'buy_tag'] = 'ewm ' + df['buy_tag'].str.strip()
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'close', 'lc2_adj', 'volume', 'low_low_20', 'close_ewm_5', 'close_corr_5', 'vwrs_5', 'low_low_24', 'close_ewm_6', 'close_corr_6', 'vwrs_6']])
