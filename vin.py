@@ -155,7 +155,7 @@ def vwrs(df: DataFrame, length: int) -> Series:
 
 
 class ViNBuyPct(ViN):
-    buy_lookback_range = range(13, 33)
+    buy_lookback_range = range(9, 33)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         for i in self.buy_lookback_range:
             df[f"pctchange_{i}"] = df['close'].pct_change(periods=i)
@@ -185,16 +185,42 @@ class ViNBuyPct(ViN):
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
             df.loc[buy, 'buy_tag_sum'] += i
-        incl = ['13 ', '15 ', '17 ', '18 ', '20 ']
-        excl = ['13 14 15 ', '13 14 15 16 ', '16 17 18 ', '16 17 18 19 ', '20 21 22 ', '26 27 ', '30 ']
-        df.loc[:, 'buy'] = (df['buy_tag_sum'].ge(26) | df['buy_tag'].isin(incl)) & ~df['buy_tag'].isin(excl)
+        df.loc[:, 'buy'] = (
+              df['buy_tag_sum'].between(9, 888)
+            # & df['buy_tag'].ne('8 9 10 ')
+            # & df['buy_tag'].ne('8 9 10 11 ')
+            # & df['buy_tag'].ne('8 9 10 11 12 13 ')
+            # & df['buy_tag'].ne('8 9 10 11 12 13 14 ')
+            # & df['buy_tag'].ne('8 9 10 11 12 13 14 15 ')
+            & df['buy_tag'].ne('9 ')
+            & df['buy_tag'].ne('10 ')
+            & df['buy_tag'].ne('12 ')
+            & df['buy_tag'].ne('14 ')
+            & df['buy_tag'].ne('21 ')
+            & df['buy_tag'].ne('23 ')
+            & df['buy_tag'].ne('15 16 17 ')
+            & df['buy_tag'].ne('16 ')
+            & df['buy_tag'].ne('16 17 ')
+            & df['buy_tag'].ne('16 17 18 ')
+            & df['buy_tag'].ne('16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 ')
+            & df['buy_tag'].ne('20 21 ')
+            & df['buy_tag'].ne('22 ')
+            & df['buy_tag'].ne('22 23 24 ')
+            & df['buy_tag'].ne('22 23 24 25 26 27 28 29 30 31 32 ')
+            & df['buy_tag'].ne('24 25 ')
+            & df['buy_tag'].ne('26 27 ')
+            & df['buy_tag'].ne('29 ')
+            & df['buy_tag'].ne('25 26 27 28 29 30 31 32 ')
+            & df['buy_tag'].ne('28 29 30 31 32 ')
+            & df['buy_tag'].ne('31 ')
+        )
         df.loc[df['buy'], 'buy_tag'] = 'pct ' + df['buy_tag'].str.strip()
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'close', 'lc2_adj', 'volume', 'streak_s_min', 'streak_s_max', 'streak_h']])
         return df
 
 class ViNBuyEwm(ViN):
-    buy_lookback_range = range(5, 7)
+    buy_lookback_range = (4, 6, 7, 8)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         ef = df[['close', 'hlc3_adj', 'volume']].reset_index()
         for i in self.buy_lookback_range:
@@ -223,14 +249,19 @@ class ViNBuyEwm(ViN):
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
             df.loc[buy, 'buy_tag_sum'] += i
-        df.loc[:, 'buy'] = df['buy_tag_sum'].between(5, 6)
+        df.loc[:, 'buy'] = (
+              df['buy_tag'].eq('4 ')
+            | df['buy_tag'].eq('6 ')
+            | df['buy_tag'].eq('4 6 ')
+            | df['buy_tag'].eq('4 7 ')
+        )
         df.loc[df['buy'], 'buy_tag'] = 'ewm ' + df['buy_tag'].str.strip()
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'close', 'lc2_adj', 'volume', 'low_low_20', 'close_ewm_5', 'close_corr_5', 'vwrs_5', 'low_low_24', 'close_ewm_6', 'close_corr_6', 'vwrs_6']])
         return df
 
 class ViNSellCorr(ViN):
-    lookback_candles = 75
+    lookback_candles = 25
     def custom_sell(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
                     current_profit: float, **kwargs):
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
@@ -241,16 +272,29 @@ class ViNSellCorr(ViN):
         candle_1 = df_trade.iloc[-1]
         d = candle_1['date'].strftime('%Y-%m-%d %H:%M')
         current_profit = (candle_1['close'] - trade.open_rate) / trade.open_rate
+
+        # current profit is not important
+        # rise and fall from lowest and highest point should matter more
+        # use hlc3 top and bottom
+
         buy_vol = df_trade['volume'].iat[0]
         trade_vol = df_trade['volume'].tail(trade_len).sum()
         trade_recent_buys = df_trade['buy'].tail(min(trade_len, 6)).sum()
-        if trade_len <= 2 or trade_recent_buys >= 1 or candle_1['streak_h'] >= candle_1['streak_s_min'] or abs(candle_1['streak_s_min']) <= 1 or (trade_vol < buy_vol * 0.05 * trade_len and -0.06 < current_profit < 0.02):
+        if trade_len <= 2 or trade_recent_buys >= 1 or candle_1['streak_h'] >= candle_1['streak_s_min'] or ((trade_len < 2 * self.lookback_candles or trade_vol < buy_vol * 0.1 * trade_len) and -0.06 < current_profit < 0.02):
+            return None
+        if candle_1['green'] and candle_1['hc2_adj'] / candle_1['close'] <= 1.002:
             return None
         t = 'profit' if current_profit >= 0.005 else 'loss'
         t += f" ({trade.buy_tag[:3]})"
-        i = min(trade_len, self.lookback_candles - int(current_profit * 18))
+        i = min(trade_len, 3 * self.lookback_candles - int(current_profit * 18))
         j = i // 2
-        ef = df_trade[['close', 'hlc3_adj', 'volume']].reset_index()
+        ef = df_trade[['close', 'hlc3_adj', 'volume', 'hc2_adj']].reset_index()
+
+        # volume corr becomes lower and hc2_adj corr higher might indicate sell
+        # ef['df_volume_corr_i'] = ef['index'].rolling(window=i, min_periods=1).corr(ef['volume'], method='spearman')
+        # ef['df_hc2_adj_corr_i'] = ef['index'].rolling(window=i, min_periods=1).corr(ef['hc2_adj'], method='spearman')
+        # print(ef)
+
         close_corr_i = ef['index'].rolling(window=i, min_periods=1).corr(ef['close'], method='spearman').iat[-1]
         close_corr_j = ef['index'].rolling(window=j, min_periods=1).corr(ef['close'], method='spearman').iat[-1]
         close_corr_ij_diff = close_corr_i - close_corr_j
@@ -264,7 +308,7 @@ class ViNSellCorr(ViN):
                 return f"corr {t}"
         close_min_j = ef['close'].tail(j).min()
         close_max_j = ef['close'].tail(j).max()
-        if trade_len > self.lookback_candles and close_max_j / close_min_j < min(1.04, trade_len / self.lookback_candles) and candle_1['streak_s_max'] < 1 and candle_1['streak_s_min'] < 0:
+        if trade_len > 4 * self.lookback_candles and close_max_j / close_min_j < min(1.04, trade_len / self.lookback_candles) and candle_1['streak_s_max'] < 1 and candle_1['streak_s_min'] < 0:
             log.info(f"{d} custom_sell: sideways sell for pair {pair} with loss {current_profit:.2f} and trade len {trade_len}.")
             return f"sideways ({trade.buy_tag[:3]})"
         return None
