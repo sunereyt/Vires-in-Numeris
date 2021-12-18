@@ -14,7 +14,7 @@ class ViN(IStrategy):
     INTERFACE_VERSION = 2
 
     def version(self) -> str:
-        return "v1.1.0"
+        return 'v1.1.1'
 
     write_to_csv = False
     df_csv = './user_data/df.csv'
@@ -149,12 +149,11 @@ class ViN(IStrategy):
             return True
         return True
 
-def vwrs(df: DataFrame, length: int) -> Series:
+def vws(df: DataFrame, length: int) -> Series:
     mf: Series = df['hlc3_adj'] * df['volume']
     mfp = mf.where(df['hlc3_adj'].pct_change().gt(0), 0).rolling(window=length, min_periods=1).sum()
     mfn = mf.where(df['hlc3_adj'].pct_change().lt(0), 0).rolling(window=length, min_periods=1).sum()
     return 100 * (mfp / (mfp + mfn))
-
 
 class ViNBuyPct(ViN):
     buy_lookback_range = range(29, 74)
@@ -186,22 +185,22 @@ class ViNBuyPct(ViN):
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
         tag_begin = df['buy_tag'].str[:3]
-        tag_end= df['buy_tag'].str[-3:-1]
+        tag_end = df['buy_tag'].str[-3:-1]
         tag_begin_end = tag_begin + tag_end
-        df.loc[:, 'buy'] = df['buy_tag'].ne('')
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('29 73')
         df.loc[df['buy'], 'buy_tag'] = 'pct ' + tag_begin_end
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'volume', 'streak_s_min', 'streak_s_max', 'streak_h', 'streak_s_min_change', 'close', 'lc2_adj']])
         return df
 
-class ViNBuyCor(ViN):
-    buy_lookback_range = range(10, 29)
+class ViNBuyVws(ViN):
+    buy_lookback_range = range(12, 34)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         ef = df[['close', 'hlc3_adj', 'volume']].reset_index()
         for i in self.buy_lookback_range:
             j = self.startup_candle_count
-            # df[f"vwrs_{i}"] = vwrs(df, length=i)
-            df[f"hlc3_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['hlc3_adj'], method='spearman')
+            df[f"vws_{i}"] = vws(df, length=i)
+            # df[f"hlc3_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['hlc3_adj'], method='spearman')
             df[f"lc2_low_{j}"] = df['lc2_adj'].rolling(window=j, min_periods=j).min()
             df = df.copy()
         return df
@@ -214,8 +213,8 @@ class ViNBuyCor(ViN):
             buy_conditions = [
                 df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
                 df['volume'].ge(self.min_candle_vol * 18),
-                # df[f"vwrs_{i}"].between(2, 9 + i),
-                df[f"hlc3_corr_{i}"].between(-0.998, -0.996), # + i / 8000),
+                df[f"vws_{i}"].between(1, 6 + pow(i, 0.5)),
+                # df[f"hlc3_corr_{i}"].between(-0.999, -0.999 + pow(i, 0.5) / 1000),
                 (df['lc2_adj'] / df[f"lc2_low_{j}"].shift(i)).between(0.998, 1.002)
                 # (df['lc2_adj'] / df['close']).between(0.975, 0.995)
             ]
@@ -225,10 +224,10 @@ class ViNBuyCor(ViN):
         tag_begin = df['buy_tag'].str[:3]
         tag_end= df['buy_tag'].str[-3:-1]
         tag_begin_end = tag_begin + tag_end
-        df.loc[:, 'buy'] = df['buy_tag'].ne('') #& (df['buy_tag'].shift(1).ne('') | df['buy_tag'].shift(2).ne(''))
-        df.loc[df['buy'], 'buy_tag'] = 'cor ' + tag_begin_end
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('11 33')
+        # df.loc[df['buy'], 'buy_tag'] = 'vws ' + tag_begin_end
         self.fill_custom_buy_info(df, metadata)
-        # print(df.loc[df['buy'], ['date', 'close', 'lc2_adj', 'volume', 'lc2_low_90', 'hlc3_corr_4']])
+        # print(df.loc[df['buy'], ['date', 'close', 'hlc3_corr_10', 'lc2_adj', 'lc2_low_90']])
         return df
 
 class ViNSellCorr(ViN):
@@ -357,13 +356,13 @@ class ViNPctRiseFall(ViNBuyPct, ViNSellRiseFall):
 class ViNPctRiseCorrFall(ViNBuyPct, ViNSellRiseCorrFall):
     pass
 
-class ViNCorCorr(ViNBuyCor, ViNSellCorr):
+class ViNVwrsCorr(ViNBuyVws, ViNSellCorr):
     pass
 
-class ViNCorRiseFall(ViNBuyCor, ViNSellRiseFall):
+class ViNVwrsRiseFall(ViNBuyVws, ViNSellRiseFall):
     pass
 
-class ViNCorEps(ViNBuyCor, ViNSellEps):
+class ViNVwrsEps(ViNBuyVws, ViNSellEps):
     pass
 
 class ViresInNumeris(ViNBuyPct, ViNSellRiseFall):
