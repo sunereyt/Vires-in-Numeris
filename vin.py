@@ -1,4 +1,4 @@
-from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import IStrategy
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
 import logging
@@ -121,7 +121,7 @@ class ViN(IStrategy):
             buy_signal_count = buy_info['buy_signals']
             if self.max_concurrent_buy_signals_check:
                 pairs = len(self.dp.current_whitelist())
-                max_concurrent_buy_signals = max(int(pairs * 0.08), 8)
+                max_concurrent_buy_signals = max(int(pairs * 0.08), 2)
                 if buy_signal_count > max_concurrent_buy_signals:
                     log.info(f"{d} confirm_trade_entry: Cancel buy for pair {pair} with buy tag {buy_tag}. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
                     return False
@@ -141,7 +141,7 @@ class ViN(IStrategy):
             buy_signal_count = buy_info['buy_signals']
             if self.max_concurrent_buy_signals_check:
                 pairs = len(self.dp.current_whitelist())
-                max_concurrent_buy_signals = max(int(pairs * 0.04), 4)
+                max_concurrent_buy_signals = max(int(pairs * 0.04), 1)
                 if buy_signal_count > max_concurrent_buy_signals:
                     log.info(f"{d} confirm_trade_exit: Cancel sell for pair {pair}. There are {buy_signal_count} concurrent buy signals (max = {max_concurrent_buy_signals}).")
                     return False
@@ -187,21 +187,92 @@ class ViNBuyPct(ViN):
         tag_begin = df['buy_tag'].str[:3]
         tag_end = df['buy_tag'].str[-3:-1]
         tag_begin_end = tag_begin + tag_end
-        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('29 73')
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('29 73') # & tag_begin_end.ne('30 30') & tag_begin_end.ne('31 31') & tag_begin_end.ne('32 32') & ~to_numeric(tag_end).between(62, 69)
         df.loc[df['buy'], 'buy_tag'] = 'pct ' + tag_begin_end
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'volume', 'streak_s_min', 'streak_s_max', 'streak_h', 'streak_s_min_change', 'close', 'lc2_adj']])
         return df
 
+class ViNBuyLc2(ViN):
+    def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
+        df.loc[:, 'buy_tag'] = ''
+        buy_lookback_range = range(49, 91)
+        for j in buy_lookback_range:
+            lc2_low: DataFrame = df['lc2_adj'].rolling(window=j, min_periods=1).min()
+            buy_conditions = [
+                df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
+                df['volume'].ge(self.min_candle_vol * 8),
+                (df['lc2_adj'].shift(1) / lc2_low.shift(2)).lt(0.99),
+                (df['lc2_adj'] / lc2_low.shift(2)).gt(1)
+            ]
+            buy = reduce(lambda x, y: x & y, buy_conditions)
+            df.loc[buy, 'buy_tag'] += f"{j} "
+        tag_begin = df['buy_tag'].str[:3]
+        tag_end = df['buy_tag'].str[-3:-1]
+        tag_begin_end = tag_begin + tag_end
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('49 90')
+        df.loc[df['buy'], 'buy_tag'] = 'lc2 ' + tag_begin_end
+        self.fill_custom_buy_info(df, metadata)
+        return df
+
+class ViNBuyPctLc2(ViN):
+    def populate_buy_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
+        df.loc[:, 'buy_tag_pct'] = ''
+        buy_lookback_range = range(29, 74)
+        for i in buy_lookback_range:
+            pctchange = df['close'].pct_change(periods=i)
+            pctchange_mean = pctchange.rolling(window=i, min_periods=i).mean()
+            pctchange_std = pctchange.rolling(window=i, min_periods=i).std()
+            bb_pctchange_up = pctchange_mean + 2 * pctchange_std
+            bb_pctchange_lo = pctchange_mean - 2 * pctchange_std
+            buy_conditions = [
+                df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
+                df['volume'].ge(self.min_candle_vol * 18),
+                df['streak_s_min'].le(-1),
+                df['streak_s_max'].between(-5, 0),
+                df['streak_h'].ge(-19),
+                df['streak_s_min'].ge(df['streak_h']),
+                df['streak_s_min_change'].le(0.97),
+                (pctchange / bb_pctchange_lo).between(1.01, 1.39),
+                (bb_pctchange_up - bb_pctchange_lo).ge(0.02),
+                (df['lc2_adj'] / df['close']).between(0.975, 0.995)
+            ]
+            buy = reduce(lambda x, y: x & y, buy_conditions)
+            df.loc[buy, 'buy_tag_pct'] += f"{i} "
+        tag_begin_pct = df['buy_tag_pct'].str[:3]
+        tag_end_pct = df['buy_tag_pct'].str[-3:-1]
+        tag_begin_end_pct = tag_begin_pct + tag_end_pct
+        df.loc[:, 'buy_tag_lc2'] = ''
+        buy_lookback_range = range(49, 91)
+        for j in buy_lookback_range:
+            lc2_low: DataFrame = df['lc2_adj'].rolling(window=j, min_periods=1).min()
+            buy_conditions = [
+                df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
+                df['volume'].ge(self.min_candle_vol * 8),
+                (df['lc2_adj'].shift(1) / lc2_low.shift(2)).lt(0.99),
+                (df['lc2_adj'] / lc2_low.shift(2)).gt(1)
+            ]
+            buy = reduce(lambda x, y: x & y, buy_conditions)
+            df.loc[buy, 'buy_tag_lc2'] += f"{j} "
+        tag_begin_lc2 = df['buy_tag_lc2'].str[:3]
+        tag_end_lc2 = df['buy_tag_lc2'].str[-3:-1]
+        tag_begin_end_lc2 = tag_begin_lc2 + tag_end_lc2
+        buy_pct = df['buy_tag_pct'].ne('') & tag_begin_end_pct.ne('29 73') # & tag_begin_end_pct.ne('30 30') & tag_begin_end_pct.ne('31 31') & tag_begin_end_pct.ne('32 32') & ~to_numeric(tag_end_pct).between(62, 69)
+        buy_lc2 = df['buy_tag_lc2'].ne('') & tag_begin_end_lc2.ne('49 90')
+        df.loc[:, 'buy'] = buy_pct | buy_lc2
+        df.loc[df['buy'], 'buy_tag'] = ('pct ' + tag_begin_end_pct + ' ').where(buy_pct, '')
+        df.loc[df['buy'], 'buy_tag'] += ('lc2 ' + tag_begin_end_lc2).where(buy_lc2, '')
+        df.loc[df['buy'], 'buy_tag'] = df['buy_tag'].str.strip()
+        self.fill_custom_buy_info(df, metadata)
+        return df
+
 class ViNBuyVws(ViN):
-    buy_lookback_range = range(12, 34)
+    buy_lookback_range = range(10, 91)
     def populate_indicators_buy(self, df: DataFrame, metadata: dict) -> DataFrame:
         ef = df[['close', 'hlc3_adj', 'volume']].reset_index()
         for i in self.buy_lookback_range:
-            j = self.startup_candle_count
             df[f"vws_{i}"] = vws(df, length=i)
-            # df[f"hlc3_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['hlc3_adj'], method='spearman')
-            df[f"lc2_low_{j}"] = df['lc2_adj'].rolling(window=j, min_periods=j).min()
+            df[f"hlc3_corr_{i}"] = ef['index'].rolling(window=i, min_periods=i).corr(ef['hlc3_adj'], method='spearman')
             df = df.copy()
         return df
 
@@ -209,22 +280,19 @@ class ViNBuyVws(ViN):
         df.loc[:, 'buy_tag'] = ''
         # df.loc[:, 'buy_tag_sum'] = 0
         for i in self.buy_lookback_range:
-            j = self.startup_candle_count
             buy_conditions = [
                 df[f"candle_count_{self.startup_candle_count}"].ge(self.startup_candle_count),
                 df['volume'].ge(self.min_candle_vol * 18),
-                df[f"vws_{i}"].between(1, 6 + pow(i, 0.5)),
-                # df[f"hlc3_corr_{i}"].between(-0.999, -0.999 + pow(i, 0.5) / 1000),
-                (df['lc2_adj'] / df[f"lc2_low_{j}"].shift(i)).between(0.998, 1.002)
-                # (df['lc2_adj'] / df['close']).between(0.975, 0.995)
+                df[f"vws_{i}"].between(2, 18), #2, pow(i, 0.67)),
+                df[f"hlc3_corr_{i}"].between(-0.999, -0.999 + pow(i, 0.5) / 1000),
             ]
             buy = reduce(lambda x, y: x & y, buy_conditions)
             df.loc[buy, 'buy_tag'] += f"{i} "
             # df.loc[buy, 'buy_tag_sum'] += i
-        tag_begin = df['buy_tag'].str[:3]
-        tag_end= df['buy_tag'].str[-3:-1]
-        tag_begin_end = tag_begin + tag_end
-        df.loc[:, 'buy'] = df['buy_tag'].ne('') & tag_begin_end.ne('11 33')
+        # tag_begin = df['buy_tag'].str[:3]
+        # tag_end= df['buy_tag'].str[-3:-1]
+        # tag_begin_end = tag_begin + tag_end
+        df.loc[:, 'buy'] = df['buy_tag'].ne('') #& tag_begin_end.ne('11 33')
         # df.loc[df['buy'], 'buy_tag'] = 'vws ' + tag_begin_end
         self.fill_custom_buy_info(df, metadata)
         # print(df.loc[df['buy'], ['date', 'close', 'hlc3_corr_10', 'lc2_adj', 'lc2_low_90']])
@@ -268,8 +336,7 @@ class ViNSellCorr(ViN):
             if close_max_j / close_min_j < min(1.04, trade_len / self.lookback_candles) and candle_1['streak_s_max'] < 1 and candle_1['streak_s_min'] < 0:
                 log.info(f"{d} custom_sell: sideways sell for pair {pair} with profit/loss {cp:.2f} and trade len {trade_len}.")
                 return f"side close {t}"
-        else:
-            return None
+        return None
 
 class ViNSellRiseFall(ViN):
     def custom_sell(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
@@ -290,24 +357,24 @@ class ViNSellRiseFall(ViN):
         fall = candle_max['hlc3_adj'] / candle_1['hlc3_adj']
         cp = (candle_1['close'] - trade.open_rate) / trade.open_rate
         t = 'profit' if cp >= 0.005 else 'loss'
-        t += f" ({trade.buy_tag[:3]})"
+        u = trade.buy_tag[:3]
         d = candle_1['date'].strftime('%Y-%m-%d %H:%M')
         if rise > 1.08:
             if fall > pow(rise, 0.33) - trade_len / 1000:
-                log.info(f"{d} custom_sell: rise sell for pair {pair} with profit/loss {cp:.2f} and trade len {trade_len}.")
-                return f"rise {t}"
+                log.info(f"{d} custom_sell: rise sell for pair {pair} with {t} {cp:.2f} and trade len {trade_len}.")
+                return f"rise {u}"
         elif rise < 1.04:
             if fall > 1.16 - trade_len / 500:
-                log.info(f"{d} custom_sell: fall sell for pair {pair} with profit/loss {cp:.2f} and trade len {trade_len}.")
-                return f"fall {t}"
-        if trade_len > self.startup_candle_count:
-            hlc3_min = df_trade['hlc3_adj'].tail(self.startup_candle_count).min()
-            hlc3_max = df_trade['hlc3_adj'].tail(self.startup_candle_count).max()
-            if hlc3_max / hlc3_min < min(1.06, trade_len / self.startup_candle_count) and candle_1['streak_s_max'] < 1 and candle_1['streak_s_min'] < 0:
-                log.info(f"{d} custom_sell: sideways sell for pair {pair} with profit/loss {cp:.2f} and trade len {trade_len}.")
-                return f"side hlc3 {t}"
-        else:
-            return None
+                log.info(f"{d} custom_sell: fall sell for pair {pair} with {t} {cp:.2f} and trade len {trade_len}.")
+                return f"fall {u}"
+        j = 90
+        if trade_len > j:
+            hlc3_min = df_trade['hlc3_adj'].tail(j).min()
+            hlc3_max = df_trade['hlc3_adj'].tail(j).max()
+            if hlc3_max / hlc3_min < min(1.06, trade_len / j) and candle_1['streak_s_max'] < 1 and candle_1['streak_s_min'] < 0:
+                log.info(f"{d} custom_sell: sideways sell for pair {pair} with {t} {cp:.2f} and trade len {trade_len}.")
+                return f"side {u}"
+        return None
 
 class ViNSellRiseCorrFall(ViN):
     lookback_candles = 75
@@ -356,13 +423,25 @@ class ViNPctRiseFall(ViNBuyPct, ViNSellRiseFall):
 class ViNPctRiseCorrFall(ViNBuyPct, ViNSellRiseCorrFall):
     pass
 
-class ViNVwrsCorr(ViNBuyVws, ViNSellCorr):
+class ViNVwsCorr(ViNBuyVws, ViNSellCorr):
     pass
 
-class ViNVwrsRiseFall(ViNBuyVws, ViNSellRiseFall):
+class ViNVwsRiseFall(ViNBuyVws, ViNSellRiseFall):
     pass
 
-class ViNVwrsEps(ViNBuyVws, ViNSellEps):
+class ViNVwsEps(ViNBuyVws, ViNSellEps):
+    pass
+
+class ViNLc2Corr(ViNBuyLc2, ViNSellCorr):
+    pass
+
+class ViNLc2Eps(ViNBuyLc2, ViNSellEps):
+    pass
+
+class ViNLc2RiseFall(ViNBuyLc2, ViNSellRiseFall):
+    pass
+
+class ViNPctLc2RiseFall(ViNBuyPctLc2, ViNSellRiseFall):
     pass
 
 class ViresInNumeris(ViNBuyPct, ViNSellRiseFall):
